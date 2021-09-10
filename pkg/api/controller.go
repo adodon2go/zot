@@ -71,6 +71,7 @@ func (c *Controller) Run() error {
 
 	engine := mux.NewRouter()
 	engine.Use(DefaultHeaders(),
+		SessionMetrics(c.Log),
 		log.SessionLogger(c.Log),
 		handlers.RecoveryHandler(handlers.RecoveryLogger(c.Log),
 			handlers.PrintRecoveryStack(false)))
