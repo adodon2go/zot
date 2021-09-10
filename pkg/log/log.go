@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anuvu/zot/pkg/extensions/monitoring"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog"
 )
@@ -140,6 +141,9 @@ func SessionLogger(log Logger) mux.MiddlewareFunc {
 			if raw != "" {
 				path = path + "?" + raw
 			}
+
+			monitoring.IncHttpConnRequests(method, statusCode)
+			monitoring.ObserveHttpServeLatency(path, latency)
 
 			log.Str("clientIP", clientIP).
 				Str("method", method).
