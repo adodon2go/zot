@@ -7,14 +7,15 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+var metricsEnabled bool
 var metricsNamespace = "zot"
+
 var (
 	HttpConnRequests = promauto.NewCounterVec(
 		prometheus.CounterOpts{
@@ -58,35 +59,45 @@ var (
 	)
 )
 
-func IncHttpConnRequests(method string, statusCode int) {
-	HttpConnRequests.WithLabelValues(method, strconv.Itoa(statusCode)).Inc()
+func IncHttpConnRequests(lvalues ...string) {
+	if metricsEnabled {
+		HttpConnRequests.WithLabelValues(lvalues...).Inc()
+	}
 }
 
 func ObserveHttpServeLatency(path string, latency time.Duration) {
-	re := regexp.MustCompile("\\/v2\\/(.*?)\\/(blobs|tags|manifests)\\/(.*)$")
-	match := re.FindStringSubmatch(path)
-	if len(match) > 1 {
-		HttpServeLatency.WithLabelValues(match[1]).Observe(latency.Seconds())
-	} else {
-		HttpServeLatency.WithLabelValues("N/A").Observe(latency.Seconds())
+	if metricsEnabled {
+		re := regexp.MustCompile("\\/v2\\/(.*?)\\/(blobs|tags|manifests)\\/(.*)$")
+		match := re.FindStringSubmatch(path)
+		if len(match) > 1 {
+			HttpServeLatency.WithLabelValues(match[1]).Observe(latency.Seconds())
+		} else {
+			HttpServeLatency.WithLabelValues("N/A").Observe(latency.Seconds())
+		}
 	}
 }
 
 func IncDownloadCounter(repo string) {
-	DownloadCounter.WithLabelValues(repo).Inc()
+	if metricsEnabled {
+		DownloadCounter.WithLabelValues(repo).Inc()
+	}
 }
 
 func SetStorageUsage(repo string, rootDir string) {
-	dir := path.Join(rootDir, repo)
-	repoSize, err := getDirSize(dir)
+	if metricsEnabled {
+		dir := path.Join(rootDir, repo)
+		repoSize, err := getDirSize(dir)
 
-	if err == nil {
-		StorageUsage.WithLabelValues(repo).Set(float64(repoSize))
+		if err == nil {
+			StorageUsage.WithLabelValues(repo).Set(float64(repoSize))
+		}
 	}
 }
 
 func IncUploadCounter(repo string) {
-	UploadCounter.WithLabelValues(repo).Inc()
+	if metricsEnabled {
+		UploadCounter.WithLabelValues(repo).Inc()
+	}
 }
 
 func getDirSize(path string) (int64, error) {
@@ -102,4 +113,12 @@ func getDirSize(path string) (int64, error) {
 	})
 
 	return size, err
+}
+
+func GetMetrics() interface{} {
+	return new(struct{})
+}
+
+func EnableMetrics() {
+	metricsEnabled = true
 }

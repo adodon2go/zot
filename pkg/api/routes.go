@@ -20,11 +20,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	_ "github.com/anuvu/zot/docs" // as required by swaggo
 	"github.com/anuvu/zot/errors"
 	ext "github.com/anuvu/zot/pkg/extensions"
+	"github.com/anuvu/zot/pkg/extensions/monitoring"
 	"github.com/anuvu/zot/pkg/log"
 	"github.com/anuvu/zot/pkg/storage"
 	"github.com/gorilla/mux"
@@ -1167,15 +1167,7 @@ func (rh *RouteHandler) ListRepositories(w http.ResponseWriter, r *http.Request)
 }
 
 func (rh *RouteHandler) GetMetrics(w http.ResponseWriter, r *http.Request) {
-	if !MetricsEnabled {
-		MetricsEnabled = true
-	}
-	LastMetricsCheck = time.Now()
-
-	InMemoryMetrics.mutex.RLock()
-	m := InMemoryMetrics
-	InMemoryMetrics.mutex.RUnlock()
-
+	m := monitoring.GetMetrics()
 	WriteJSON(w, http.StatusOK, m)
 }
 
