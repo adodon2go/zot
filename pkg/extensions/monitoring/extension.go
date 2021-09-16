@@ -3,9 +3,7 @@
 package monitoring
 
 import (
-	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"time"
 
@@ -57,6 +55,14 @@ var (
 		},
 		[]string{"repo"},
 	)
+	ZotInfo = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: metricsNamespace,
+			Name:      "info",
+			Help:      "Zot general information",
+		},
+		[]string{"commit", "binaryType", "goVersion", "version"},
+	)
 )
 
 func IncHttpConnRequests(lvalues ...string) {
@@ -100,25 +106,15 @@ func IncUploadCounter(repo string) {
 	}
 }
 
-func getDirSize(path string) (int64, error) {
-	var size int64
-	err := filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			size += info.Size()
-		}
-		return err
-	})
-
-	return size, err
-}
-
 func GetMetrics() interface{} {
 	return new(struct{})
 }
 
 func EnableMetrics() {
 	metricsEnabled = true
+}
+
+func SetZotInfo(lvalues ...string) {
+	//  This metric is set once at zot startup (do not condition upon metricsEnabled!)
+	ZotInfo.WithLabelValues(lvalues...).Set(0)
 }
