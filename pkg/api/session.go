@@ -88,6 +88,7 @@ func SessionLogger(log log.Logger) mux.MiddlewareFunc {
 
 			monitoring.IncHttpConnRequests(method, strconv.Itoa(statusCode))
 			monitoring.ObserveHttpServeLatency(path, latency)
+			monitoring.ObserveHttpServeLatencyHist(method, latency)
 
 			log.Str("clientIP", clientIP).
 				Str("method", method).

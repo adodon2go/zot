@@ -31,6 +31,15 @@ var (
 		},
 		[]string{"repo"},
 	)
+	HttpServeLatencyHist = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: metricsNamespace,
+			Name:      "http_latency_histo_seconds",
+			Help:      "Latency of serving HTTP requests - Histogram",
+			Buckets:   []float64{.05, .5, 1, 5, 30, 60, 600},
+		},
+		[]string{"method"},
+	)
 	StorageUsage = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: metricsNamespace,
@@ -80,6 +89,12 @@ func ObserveHttpServeLatency(path string, latency time.Duration) {
 		} else {
 			HttpServeLatency.WithLabelValues("N/A").Observe(latency.Seconds())
 		}
+	}
+}
+
+func ObserveHttpServeLatencyHist(method string, latency time.Duration) {
+	if metricsEnabled {
+			HttpServeLatencyHist.WithLabelValues(method).Observe(latency.Seconds())
 	}
 }
 
