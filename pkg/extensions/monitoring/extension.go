@@ -23,7 +23,7 @@ var (
 		},
 		[]string{"method", "code"},
 	)
-	HttpServeLatency = promauto.NewSummaryVec(
+	HttpRepoLatency = promauto.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Namespace: metricsNamespace,
 			Name:      "http_latency_seconds",
@@ -31,12 +31,12 @@ var (
 		},
 		[]string{"repo"},
 	)
-	HttpServeLatencyHist = promauto.NewHistogramVec(
+	HttpMethodLatency = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: metricsNamespace,
 			Name:      "http_latency_histo_seconds",
 			Help:      "Latency of serving HTTP requests - Histogram",
-			Buckets:   []float64{.05, .5, 1, 5, 30, 60, 600},
+			Buckets:   GetDefaultBuckets(),
 		},
 		[]string{"method"},
 	)
@@ -80,21 +80,21 @@ func IncHttpConnRequests(lvalues ...string) {
 	}
 }
 
-func ObserveHttpServeLatency(path string, latency time.Duration) {
+func ObserveHttpRepoLatency(path string, latency time.Duration) {
 	if metricsEnabled {
 		re := regexp.MustCompile("\\/v2\\/(.*?)\\/(blobs|tags|manifests)\\/(.*)$")
 		match := re.FindStringSubmatch(path)
 		if len(match) > 1 {
-			HttpServeLatency.WithLabelValues(match[1]).Observe(latency.Seconds())
+			HttpRepoLatency.WithLabelValues(match[1]).Observe(latency.Seconds())
 		} else {
-			HttpServeLatency.WithLabelValues("N/A").Observe(latency.Seconds())
+			HttpRepoLatency.WithLabelValues("N/A").Observe(latency.Seconds())
 		}
 	}
 }
 
-func ObserveHttpServeLatencyHist(method string, latency time.Duration) {
+func ObserveHttpMethodLatency(method string, latency time.Duration) {
 	if metricsEnabled {
-			HttpServeLatencyHist.WithLabelValues(method).Observe(latency.Seconds())
+		HttpMethodLatency.WithLabelValues(method).Observe(latency.Seconds())
 	}
 }
 
