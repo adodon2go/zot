@@ -5,10 +5,11 @@
     },
     "http": {
         "address": "127.0.0.1",
-        "port": "5051",
+        "port": "8080",
         "ReadOnly": false
     },
     "log": {
-        "level": "debug"
+        "level": "debug",
+        "output": "/tmp/zot.log"
     }
 }

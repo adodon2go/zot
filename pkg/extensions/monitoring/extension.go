@@ -18,7 +18,7 @@ var (
 	HttpConnRequests = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: metricsNamespace,
-			Name:      "http_requests_total",
+			Name:      "zot_http_requests_total",
 			Help:      "Total number of http request in zot",
 		},
 		[]string{"method", "code"},
@@ -26,7 +26,7 @@ var (
 	HttpRepoLatency = promauto.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Namespace: metricsNamespace,
-			Name:      "http_latency_seconds",
+			Name:      "http_repo_latency_seconds",
 			Help:      "Latency of serving HTTP requests",
 		},
 		[]string{"repo"},
@@ -34,8 +34,8 @@ var (
 	HttpMethodLatency = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: metricsNamespace,
-			Name:      "http_latency_histo_seconds",
-			Help:      "Latency of serving HTTP requests - Histogram",
+			Name:      "http_method_latency_seconds",
+			Help:      "Latency of serving HTTP requests",
 			Buckets:   GetDefaultBuckets(),
 		},
 		[]string{"method"},
@@ -43,15 +43,15 @@ var (
 	StorageUsage = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: metricsNamespace,
-			Name:      "storage_usage_bytes",
-			Help:      "Storage used",
+			Name:      "zot_repo_storage_bytes",
+			Help:      "Storage used per zot repo",
 		},
 		[]string{"repo"},
 	)
 	UploadCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: metricsNamespace,
-			Name:      "upload_image_total",
+			Name:      "zot_repo_uploads_total",
 			Help:      "Total number times an image was uploaded",
 		},
 		[]string{"repo"},
@@ -59,7 +59,7 @@ var (
 	DownloadCounter = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: metricsNamespace,
-			Name:      "download_image_total",
+			Name:      "zot_repo_downloads_total",
 			Help:      "Total number times an image was downloaded",
 		},
 		[]string{"repo"},

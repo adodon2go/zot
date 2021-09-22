@@ -117,49 +117,41 @@ func GetMetrics() MetricsInfo {
 	return inMemoryMetrics
 }
 
+// return true if a metric does not have any labels or
+// if the label values for searched metric corresponds to the one in the cached slice
+func isMetricMatch(lNames []string, lValues []string, metricValues []string) bool {
+	if lNames == nil && lValues == nil {
+		// metric does not contain any labels
+		return true
+	}
+	if len(lValues) == len(metricValues) {
+		for i, v := range metricValues {
+			if v != lValues[i] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // returns {-1, false} in case metric was not found in the slice
 func findSampledValueIndex(metricSlice []SampledValue, name string, labelNames []string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
-			if labelNames == nil && labelValues == nil {
-				//found the sampled values
+			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
 				return i, true
-			}
-			if len(labelValues) == len(m.LabelValues) {
-				found := true
-				for j, v := range m.LabelValues {
-					if v != labelValues[j] {
-						found = false
-						break
-					}
-				}
-				if found {
-					return i, true
-				}
 			}
 		}
 	}
 	return -1, false
 }
 
+// returns {-1, false} in case metric was not found in the slice
 func findGaugeValueIndex(metricSlice []GaugeValue, name string, labelNames []string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
-			if labelNames == nil && labelValues == nil {
-				//found the sampled values
+			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
 				return i, true
-			}
-			if len(labelValues) == len(m.LabelValues) {
-				found := true
-				for j, v := range m.LabelValues {
-					if v != labelValues[j] {
-						found = false
-						break
-					}
-				}
-				if found {
-					return i, true
-				}
 			}
 		}
 	}
