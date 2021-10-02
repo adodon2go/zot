@@ -86,9 +86,13 @@ func SessionLogger(log log.Logger) mux.MiddlewareFunc {
 				path = path + "?" + raw
 			}
 
-			monitoring.IncHTTPConnRequests(method, strconv.Itoa(statusCode))
-			monitoring.ObserveHTTPRepoLatency(path, latency)     // summary
-			monitoring.ObserveHTTPMethodLatency(method, latency) // histogram
+			if path != "/v2/metrics" {
+				// In order to test zot instrumentation properly,the instrumentation related to node exporter
+				// should be handled by node exporter itself (ex: latency)
+				monitoring.IncHTTPConnRequests(method, strconv.Itoa(statusCode))
+				monitoring.ObserveHTTPRepoLatency(path, latency)     // summary
+				monitoring.ObserveHTTPMethodLatency(method, latency) // histogram
+			}
 
 			log.Str("clientIP", clientIP).
 				Str("method", method).

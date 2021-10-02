@@ -36,10 +36,10 @@ type MetricsInfo struct {
 }
 
 var inMemoryMetrics MetricsInfo
-var zotCounterList map[string][]string
-var zotGaugeList map[string][]string
-var zotSummaryList map[string][]string
-var zotHistogramList map[string][]string
+var zotCounters map[string][]string
+var zotGauges map[string][]string
+var zotSummaries map[string][]string
+var zotHistograms map[string][]string
 var metricsEnabled bool
 var lastMetricsCheck time.Time
 var bucketsFloat2String map[float64]string
@@ -66,23 +66,23 @@ type SampledValue struct {
 
 func init() {
 	// contains a map with key=CounterName and value=CounterLabels
-	zotCounterList = map[string][]string{
+	zotCounters = map[string][]string{
 		httpConnRequests: []string{"method", "code"},
 		repoDownloads:    []string{"repo"},
 		repoUploads:      []string{"repo"},
 	}
 	// contains a map with key=CounterName and value=CounterLabels
-	zotGaugeList = map[string][]string{
+	zotGauges = map[string][]string{
 		repoStorageBytes: []string{"repo"},
 		zotInfo:          []string{"commit", "binaryType", "goVersion", "version"},
 	}
 
 	// contains a map with key=CounterName and value=CounterLabels
-	zotSummaryList = map[string][]string{
+	zotSummaries = map[string][]string{
 		httpRepoLatencySeconds: []string{"repo"},
 	}
 
-	zotHistogramList = map[string][]string{
+	zotHistograms = map[string][]string{
 		httpMethodLatencySeconds: []string{"method"},
 	}
 
@@ -104,6 +104,11 @@ func init() {
 		}
 	}
 }
+
+func GetMetricCounters() map[string][]string   { return zotCounters }
+func GetMetricGauges() map[string][]string     { return zotGauges }
+func GetMetricSummaries() map[string][]string  { return zotSummaries }
+func GetMetricHistograms() map[string][]string { return zotHistograms }
 
 func GetMetrics() MetricsInfo {
 	if !metricsEnabled {
@@ -162,16 +167,16 @@ func findGaugeValueIndex(metricSlice []GaugeValue, name string, labelNames []str
 func CounterInc(name string, labelNames []string, labelValues []string) {
 	var sv SampledValue
 
-	kLabels, ok := zotCounterList[name] // known label names for the 'name' counter
+	kLabels, ok := zotCounters[name] // known label names for the 'name' counter
 	err := sanityChecks(name, kLabels, ok, labelNames, labelValues)
 	if err != nil {
 		fmt.Println(err) // The last thing we want is to panic/stop the server due to instrumentation
 		return           // thus log a message (should be detected during development of new metrics)
 	}
 
-	index, ok := findSampledValueIndex(inMemoryMetrics.Counters, name, labelNames, labelValues)
 	inMemoryMetrics.mutex.Lock()
 	defer inMemoryMetrics.mutex.Unlock()
+	index, ok := findSampledValueIndex(inMemoryMetrics.Counters, name, labelNames, labelValues)
 	if !ok {
 		// The SampledValue not found: create one
 		sv = SampledValue{
@@ -190,16 +195,16 @@ func CounterInc(name string, labelNames []string, labelValues []string) {
 func GaugeSet(name string, value float64, labelNames []string, labelValues []string) {
 	var gv GaugeValue
 
-	kLabels, ok := zotGaugeList[name] // known label names for the 'name' counter
+	kLabels, ok := zotGauges[name] // known label names for the 'name' counter
 	err := sanityChecks(name, kLabels, ok, labelNames, labelValues)
 	if err != nil {
 		fmt.Println(err) // The last thing we want is to panic/stop the server due to instrumentation
 		return           // thus log a message (should be detected during development of new metrics)
 	}
 
-	index, ok := findGaugeValueIndex(inMemoryMetrics.Gauges, name, labelNames, labelValues)
 	inMemoryMetrics.mutex.Lock()
 	defer inMemoryMetrics.mutex.Unlock()
+	index, ok := findGaugeValueIndex(inMemoryMetrics.Gauges, name, labelNames, labelValues)
 	if !ok {
 		// The GaugeValue not found: create one
 		gv = GaugeValue{
@@ -218,16 +223,16 @@ func GaugeSet(name string, value float64, labelNames []string, labelValues []str
 func SummaryObserve(name string, value float64, labelNames []string, labelValues []string) {
 	var sv SampledValue
 
-	kLabels, ok := zotSummaryList[name] // known label names for the 'name' counter
+	kLabels, ok := zotSummaries[name] // known label names for the 'name' counter
 	err := sanityChecks(name, kLabels, ok, labelNames, labelValues)
 	if err != nil {
 		fmt.Println(err) // The last thing we want is to panic/stop the server due to instrumentation
 		return           // thus log a message (should be detected during development of new metrics)
 	}
 
-	index, ok := findSampledValueIndex(inMemoryMetrics.Samples, name, labelNames, labelValues)
 	inMemoryMetrics.mutex.Lock()
 	defer inMemoryMetrics.mutex.Unlock()
+	index, ok := findSampledValueIndex(inMemoryMetrics.Samples, name, labelNames, labelValues)
 	if !ok {
 		// The SampledValue not found: create one
 		sv = SampledValue{
@@ -247,16 +252,16 @@ func SummaryObserve(name string, value float64, labelNames []string, labelValues
 func HistogramObserve(name string, value float64, labelNames []string, labelValues []string) {
 	var sv SampledValue
 
-	kLabels, ok := zotHistogramList[name] // known label names for the 'name' counter
+	kLabels, ok := zotHistograms[name] // known label names for the 'name' counter
 	err := sanityChecks(name, kLabels, ok, labelNames, labelValues)
 	if err != nil {
 		fmt.Println(err) // The last thing we want is to panic/stop the server due to instrumentation
 		return           // thus log a message (should be detected during development of new metrics)
 	}
 
-	index, ok := findSampledValueIndex(inMemoryMetrics.Samples, name, labelNames, labelValues)
 	inMemoryMetrics.mutex.Lock()
 	defer inMemoryMetrics.mutex.Unlock()
+	index, ok := findSampledValueIndex(inMemoryMetrics.Samples, name, labelNames, labelValues)
 	if !ok {
 		// The SampledValue not found: create one
 		buckets := make(map[string]int, 0)

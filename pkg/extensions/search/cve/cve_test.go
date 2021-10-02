@@ -1,3 +1,5 @@
+// +build extended
+
 // nolint: lll
 package cveinfo_test
 

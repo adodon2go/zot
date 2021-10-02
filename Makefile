@@ -32,15 +32,26 @@ test:
 	$(shell mkdir -p test/data;  cd test/data; ../scripts/gen_certs.sh; cd ${TOP_LEVEL}; sudo skopeo --insecure-policy copy -q docker://public.ecr.aws/t0x7q1g8/centos:7 oci:${TOP_LEVEL}/test/data/zot-test:0.0.1;sudo skopeo --insecure-policy copy -q docker://public.ecr.aws/t0x7q1g8/centos:8 oci:${TOP_LEVEL}/test/data/zot-cve-test:0.0.1)
 	$(shell sudo mkdir -p /etc/containers/certs.d/127.0.0.1:8089/; sudo cp test/data/client.* /etc/containers/certs.d/127.0.0.1:8089/; sudo cp test/data/ca.* /etc/containers/certs.d/127.0.0.1:8089/;)
 	$(shell sudo chmod a=rwx /etc/containers/certs.d/127.0.0.1:8089/*.key)
-	go test -tags extended -v -race -cover -coverpkg ./... -coverprofile=coverage.txt -covermode=atomic ./...
+	go test -tags extended -v -race -cover -coverpkg ./... -coverprofile=coverage-extended.txt -covermode=atomic ./...
+	go test -tags minimal -v -race -cover -coverpkg ./... -coverprofile=coverage-minimal.txt -covermode=atomic ./...
 
 .PHONY: test-clean
 test-clean:
 	$(shell sudo rm -rf /etc/containers/certs.d/127.0.0.1:8089/)
 
+.PHONY: test-minimal
+test-minimal:
+	go test -tags minimal -v -race -cover -coverpkg github.com/anuvu/zot/pkg/exporter/api -coverprofile=coverage-minimal.txt -covermode=atomic github.com/anuvu/zot/pkg/exporter/api
+
 .PHONY: covhtml
 covhtml:
+	tail -n +2 coverage-minimal.txt > tmp.txt && mv tmp.txt coverage-minimal.txt
+	cat coverage-extended.txt coverage-minimal.txt > coverage.txt
 	go tool cover -html=coverage.txt -o coverage.html
+
+.PHONY: covhtml-minimal
+covhtml-minimal:
+	go tool cover -html=coverage-minimal.txt -o coverage-minimal.html
 
 .PHONY: check
 check: ./golangcilint.yaml
@@ -83,3 +94,11 @@ binary-stacker:
 .PHONY: image
 image:
 	${CONTAINER_RUNTIME} build ${BUILD_ARGS} -f Dockerfile -t zot:latest .
+
+# Install mockgen if missing
+#.PHONY: install-mock-generate
+#install-mock-generate:
+#	go install -v github.com/golang/mock/mockgen
+
+#mocks-generate:
+#	go generate -tags minimal ./...
