@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -26,6 +27,11 @@ const (
 	BaseURL   = "http://127.0.0.1:%s"
 	SleepTime = 50 * time.Millisecond
 )
+
+func getRandomLatency() time.Duration {
+	rand.Seed(time.Now().UnixNano())
+	return time.Duration(rand.Intn(120 * 1000000)) // a random latency (in nanoseconds) that can be up to 2 minutes
+}
 
 func getFreePort() string {
 	port, err := freeport.GetFreePort()
@@ -60,7 +66,6 @@ func readDefaultMetrics(zc *api.ZotCollector, ch chan prometheus.Metric) {
 	So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_up"].String())
 
 	pm.Write(&metric)
-	fmt.Printf("Prometheus Metric: %f \n", *metric.Gauge.Value)
 	So(*metric.Gauge.Value, ShouldEqual, 1)
 
 	pm = <-ch
@@ -88,6 +93,8 @@ func TestNewExporter(t *testing.T) {
 				exporterController.Run()
 				So(nil, ShouldNotBeNil) // Fail the test in case zot exporter unexpectedly exits
 			}()
+			time.Sleep(SleepTime)
+
 			zc := api.GetZotCollector(exporterController)
 			ch := make(chan prometheus.Metric)
 
@@ -151,9 +158,10 @@ func TestNewExporter(t *testing.T) {
 					readDefaultMetrics(zc, ch)
 					So(isChannelDrained(ch), ShouldEqual, true)
 				})
+
 				Convey("Collecting data: Test init value & that increment works on Counters", func() {
 					//Testing initial value of the counter to be 1 after first incrementation call
-					monitoring.IncUploadCounter("testrepo")
+					monitoring.IncUploadCounter(serverController.Metrics, "testrepo")
 					time.Sleep(SleepTime)
 
 					go func() {
@@ -172,8 +180,8 @@ func TestNewExporter(t *testing.T) {
 					So(isChannelDrained(ch), ShouldEqual, true)
 
 					//Testing that counter is incremented by 1
-					monitoring.IncUploadCounter("testrepo")
-					time.Sleep(50 * time.Millisecond)
+					monitoring.IncUploadCounter(serverController.Metrics, "testrepo")
+					time.Sleep(SleepTime)
 
 					go func() {
 						// this blocks
@@ -190,9 +198,86 @@ func TestNewExporter(t *testing.T) {
 					So(isChannelDrained(ch), ShouldEqual, true)
 				})
 				Convey("Collecting data: Test that concurent Counter increment requests works properly", func() {
-					reqsSize := 100
+					reqsSize := rand.Intn(1000)
 					for i := 0; i < reqsSize; i++ {
-						monitoring.IncDownloadCounter("dummyrepo")
+						monitoring.IncDownloadCounter(serverController.Metrics, "dummyrepo")
+					}
+					time.Sleep(SleepTime)
+
+					go func() {
+						// this blocks
+						zc.Collect(ch)
+					}()
+					readDefaultMetrics(zc, ch)
+					pm := <-ch
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_downloads_total"].String())
+
+					var metric dto.Metric
+					pm.Write(&metric)
+					So(*metric.Counter.Value, ShouldEqual, reqsSize)
+
+					So(isChannelDrained(ch), ShouldEqual, true)
+				})
+				Convey("Collecting data: Test init value & that observe works on Summaries", func() {
+					//Testing initial value of the summary counter to be 1 after first observation call
+					var latency1, latency2 time.Duration
+					latency1 = getRandomLatency()
+					monitoring.ObserveHTTPRepoLatency(serverController.Metrics, "/v2/testrepo/blogs/dummydigest", latency1)
+					time.Sleep(SleepTime)
+
+					go func() {
+						//this blocks
+						zc.Collect(ch)
+					}()
+					readDefaultMetrics(zc, ch)
+
+					pm := <-ch
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_count"].String())
+
+					var metric dto.Metric
+					pm.Write(&metric)
+					So(*metric.Counter.Value, ShouldEqual, 1)
+
+					pm = <-ch
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_sum"].String())
+
+					pm.Write(&metric)
+					So(*metric.Counter.Value, ShouldEqual, latency1.Seconds())
+
+					So(isChannelDrained(ch), ShouldEqual, true)
+
+					//Testing that summary counter is incremented by 1 and summary sum is  properly updated
+					latency2 = getRandomLatency()
+					monitoring.ObserveHTTPRepoLatency(serverController.Metrics, "/v2/testrepo/blogs/dummydigest", latency2)
+					time.Sleep(SleepTime)
+
+					go func() {
+						// this blocks
+						zc.Collect(ch)
+					}()
+					readDefaultMetrics(zc, ch)
+
+					pm = <-ch
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_count"].String())
+
+					pm.Write(&metric)
+					So(*metric.Counter.Value, ShouldEqual, 2)
+
+					pm = <-ch
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_sum"].String())
+
+					pm.Write(&metric)
+					So(*metric.Counter.Value, ShouldEqual, (latency1.Seconds())+(latency2.Seconds()))
+
+					So(isChannelDrained(ch), ShouldEqual, true)
+				})
+				Convey("Collecting data: Test that concurent Summary observation requests works properly", func() {
+					var latencySum float64
+					reqsSize := rand.Intn(1000)
+					for i := 0; i < reqsSize; i++ {
+						latency := getRandomLatency()
+						latencySum += latency.Seconds()
+						monitoring.ObserveHTTPRepoLatency(serverController.Metrics, "/v2/dummyrepo/manifests/testreference", latency)
 					}
 					time.Sleep(SleepTime)
 
@@ -203,17 +288,56 @@ func TestNewExporter(t *testing.T) {
 					readDefaultMetrics(zc, ch)
 
 					pm := <-ch
-					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_uploads_total"].String())
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_count"].String())
 
 					var metric dto.Metric
 					pm.Write(&metric)
-					So(*metric.Counter.Value, ShouldEqual, 2)
+					So(*metric.Counter.Value, ShouldEqual, reqsSize)
 
 					pm = <-ch
-					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_downloads_total"].String())
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_sum"].String())
 
 					pm.Write(&metric)
-					So(*metric.Counter.Value, ShouldEqual, reqsSize)
+					So(*metric.Counter.Value, ShouldEqual, latencySum)
+
+					So(isChannelDrained(ch), ShouldEqual, true)
+				})
+				Convey("Collecting data: Test init value & that observe works on Histogram buckets", func() {
+					//Testing initial value of the histogram counter to be 1 after first observation call
+					latency := getRandomLatency()
+					monitoring.ObserveHTTPMethodLatency(serverController.Metrics, "GET", latency)
+					time.Sleep(SleepTime)
+
+					go func() {
+						//this blocks
+						zc.Collect(ch)
+					}()
+					readDefaultMetrics(zc, ch)
+
+					pm := <-ch
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_method_latency_seconds_count"].String())
+
+					var metric dto.Metric
+					pm.Write(&metric)
+					So(*metric.Counter.Value, ShouldEqual, 1)
+
+					pm = <-ch
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_method_latency_seconds_sum"].String())
+
+					pm.Write(&metric)
+					So(*metric.Counter.Value, ShouldEqual, latency.Seconds())
+
+					for _, fvalue := range monitoring.GetDefaultBuckets() {
+						pm = <-ch
+						So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_method_latency_seconds_bucket"].String())
+
+						pm.Write(&metric)
+						if latency.Seconds() < fvalue {
+							So(*metric.Counter.Value, ShouldEqual, 1)
+						} else {
+							So(*metric.Counter.Value, ShouldEqual, 0)
+						}
+					}
 
 					So(isChannelDrained(ch), ShouldEqual, true)
 				})

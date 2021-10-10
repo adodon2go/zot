@@ -16,6 +16,7 @@ import (
 
 	"github.com/anuvu/zot/pkg/api"
 	ext "github.com/anuvu/zot/pkg/extensions"
+	"github.com/anuvu/zot/pkg/extensions/monitoring"
 	"github.com/anuvu/zot/pkg/extensions/search/common"
 	cveinfo "github.com/anuvu/zot/pkg/extensions/search/cve"
 	"github.com/anuvu/zot/pkg/log"
@@ -95,8 +96,9 @@ func testSetup() error {
 	}
 
 	log := log.NewLogger("debug", "")
+	metrics := monitoring.NewMetricsServer(false, log)
 
-	storeController := storage.StoreController{DefaultStore: storage.NewImageStore(dir, false, false, log)}
+	storeController := storage.StoreController{DefaultStore: storage.NewImageStore(dir, false, false, log, metrics)}
 
 	layoutUtils := common.NewOciLayoutUtils(log)
 
@@ -411,13 +413,14 @@ func TestMultipleStoragePath(t *testing.T) {
 		defer os.RemoveAll(thirdRootDir)
 
 		log := log.NewLogger("debug", "")
+		metrics := monitoring.NewMetricsServer(false, log)
 
 		// Create ImageStore
-		firstStore := storage.NewImageStore(firstRootDir, false, false, log)
+		firstStore := storage.NewImageStore(firstRootDir, false, false, log, metrics)
 
-		secondStore := storage.NewImageStore(secondRootDir, false, false, log)
+		secondStore := storage.NewImageStore(secondRootDir, false, false, log, metrics)
 
-		thirdStore := storage.NewImageStore(thirdRootDir, false, false, log)
+		thirdStore := storage.NewImageStore(thirdRootDir, false, false, log, metrics)
 
 		storeController := storage.StoreController{}
 

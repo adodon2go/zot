@@ -57,6 +57,7 @@ covhtml-minimal:
 check: ./golangcilint.yaml
 	golangci-lint --version || curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s v1.26.0
 	golangci-lint --config ./golangcilint.yaml run --enable-all --build-tags extended ./cmd/... ./pkg/...
+	golangci-lint --config ./golangcilint.yaml run --enable-all --build-tags minimal ./cmd/... ./pkg/...
 
 docs/docs.go: 
 	swag -v || go install github.com/swaggo/swag/cmd/swag

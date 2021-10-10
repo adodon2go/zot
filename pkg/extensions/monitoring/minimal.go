@@ -9,12 +9,12 @@ import (
 	"path"
 	"regexp"
 	"strconv"
-	"sync"
 	"time"
+
+	"github.com/anuvu/zot/pkg/log"
 )
 
 const (
-	metricsScrapeTimeout = 5 * time.Minute
 	// Counters
 	httpConnRequests = "zot.http.requests"
 	repoDownloads    = "zot.repo.downloads"
@@ -26,23 +26,42 @@ const (
 	httpRepoLatencySeconds = "zot.repo.latency.seconds"
 	//Histogram
 	httpMethodLatencySeconds = "zot.method.latency.seconds"
+
+	metricsScrapeTimeout       = 5 * time.Minute
+	metricsScrapeCheckInterval = 80 * time.Second
 )
 
-type MetricsInfo struct {
-	mutex    *sync.RWMutex
-	Gauges   []GaugeValue
-	Counters []SampledValue
-	Samples  []SampledValue
+type metricServer struct {
+	enabled   bool
+	lastCheck time.Time
+	reqChan   chan interface{}
+	cache     *MetricsInfo
+	cacheChan chan *MetricsInfo
+	log       log.Logger
 }
 
-var inMemoryMetrics MetricsInfo
+type MetricsInfo struct {
+	Counters   []*CounterValue
+	Gauges     []*GaugeValue
+	Summaries  []*SummaryValue
+	Histograms []*HistogramValue
+}
+
 var zotCounters map[string][]string
 var zotGauges map[string][]string
 var zotSummaries map[string][]string
 var zotHistograms map[string][]string
-var metricsEnabled bool
-var lastMetricsCheck time.Time
+
 var bucketsFloat2String map[float64]string
+
+// CounterValue stores info about a metric that is incremented over time,
+// such as the number of requests to an HTTP endpoint.
+type CounterValue struct {
+	Name        string
+	Count       int
+	LabelNames  []string
+	LabelValues []string
+}
 
 // GaugeValue stores one value that is updated as time goes on, such as
 // the amount of memory allocated.
@@ -53,15 +72,104 @@ type GaugeValue struct {
 	LabelValues []string
 }
 
-// SampledValue stores info about a metric that is incremented over time,
+// SummaryValue stores info about a metric that is incremented over time,
 // such as the number of requests to an HTTP endpoint.
-type SampledValue struct {
+type SummaryValue struct {
 	Name        string
 	Count       int
 	Sum         float64
 	LabelNames  []string
 	LabelValues []string
+}
+
+type HistogramValue struct {
+	Name        string
+	Count       int
+	Sum         float64
 	Buckets     map[string]int
+	LabelNames  []string
+	LabelValues []string
+}
+
+// implements the MetricServer interface.
+func (ms *metricServer) SendMetric(metric interface{}) {
+	if ms.enabled {
+		ms.reqChan <- metric
+	}
+}
+
+func (ms *metricServer) ForceSendMetric(metric interface{}) {
+	ms.reqChan <- metric
+}
+
+func (ms *metricServer) ReceiveMetrics() interface{} {
+	if !ms.enabled {
+		ms.enabled = true
+	}
+	ms.cacheChan <- &MetricsInfo{}
+	return <-ms.cacheChan
+}
+
+func (ms *metricServer) Run() {
+	sendAfter := make(chan time.Duration, 1)
+	// periodically send a notification to the metric server to check if we can disable metrics
+	go func() {
+		for {
+			t := metricsScrapeCheckInterval
+			time.Sleep(t)
+			sendAfter <- t
+		}
+	}()
+	for {
+		select {
+		case <-ms.cacheChan:
+			ms.lastCheck = time.Now()
+			ms.cacheChan <- ms.cache
+		case m := <-ms.reqChan:
+			switch v := m.(type) {
+			case CounterValue:
+				cv := m.(CounterValue)
+				ms.CounterInc(&cv)
+			case GaugeValue:
+				gv := m.(GaugeValue)
+				ms.GaugeSet(&gv)
+			case SummaryValue:
+				sv := m.(SummaryValue)
+				ms.SummaryObserve(&sv)
+			case HistogramValue:
+				hv := m.(HistogramValue)
+				ms.HistogramObserve(&hv)
+			default:
+				ms.log.Fatal().Msgf("unexpected type %T", v)
+			}
+		case <-sendAfter:
+			// Check if we didn't receive a metrics scrape in a while and if so, disable metrics (possible node exporter down/crashed)
+			if ms.enabled {
+				lastCheckInterval := time.Now().Sub(ms.lastCheck)
+				if lastCheckInterval > metricsScrapeTimeout {
+					ms.enabled = false
+				}
+			}
+		}
+	}
+}
+
+func NewMetricsServer(enabled bool, log log.Logger) MetricServer {
+	mi := &MetricsInfo{
+		Counters:   make([]*CounterValue, 0),
+		Gauges:     make([]*GaugeValue, 0),
+		Summaries:  make([]*SummaryValue, 0),
+		Histograms: make([]*HistogramValue, 0),
+	}
+	ms := &metricServer{
+		enabled:   enabled,
+		reqChan:   make(chan interface{}),
+		cacheChan: make(chan *MetricsInfo),
+		cache:     mi,
+		log:       log,
+	}
+	go ms.Run()
+	return ms
 }
 
 func init() {
@@ -86,13 +194,6 @@ func init() {
 		httpMethodLatencySeconds: []string{"method"},
 	}
 
-	inMemoryMetrics = MetricsInfo{
-		mutex:    &sync.RWMutex{},
-		Gauges:   make([]GaugeValue, 0),
-		Counters: make([]SampledValue, 0),
-		Samples:  make([]SampledValue, 0),
-	}
-
 	// convert to a map for returning easily the string corresponding to a bucket
 	bucketsFloat2String = map[float64]string{}
 	for _, fvalue := range GetDefaultBuckets() {
@@ -109,18 +210,6 @@ func GetMetricCounters() map[string][]string   { return zotCounters }
 func GetMetricGauges() map[string][]string     { return zotGauges }
 func GetMetricSummaries() map[string][]string  { return zotSummaries }
 func GetMetricHistograms() map[string][]string { return zotHistograms }
-
-func GetMetrics() MetricsInfo {
-	if !metricsEnabled {
-		metricsEnabled = true
-	}
-	lastMetricsCheck = time.Now()
-
-	inMemoryMetrics.mutex.RLock()
-	defer inMemoryMetrics.mutex.RUnlock()
-
-	return inMemoryMetrics
-}
 
 // return true if a metric does not have any labels or
 // if the label values for searched metric corresponds to the one in the cached slice
@@ -140,7 +229,7 @@ func isMetricMatch(lNames []string, lValues []string, metricValues []string) boo
 }
 
 // returns {-1, false} in case metric was not found in the slice
-func findSampledValueIndex(metricSlice []SampledValue, name string, labelNames []string, labelValues []string) (int, bool) {
+func findCounterValueIndex(metricSlice []*CounterValue, name string, labelNames []string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
 			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
@@ -152,7 +241,7 @@ func findSampledValueIndex(metricSlice []SampledValue, name string, labelNames [
 }
 
 // returns {-1, false} in case metric was not found in the slice
-func findGaugeValueIndex(metricSlice []GaugeValue, name string, labelNames []string, labelValues []string) (int, bool) {
+func findGaugeValueIndex(metricSlice []*GaugeValue, name string, labelNames []string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
 			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
@@ -163,130 +252,113 @@ func findGaugeValueIndex(metricSlice []GaugeValue, name string, labelNames []str
 	return -1, false
 }
 
-// Increments a counter atomically
-func CounterInc(name string, labelNames []string, labelValues []string) {
-	var sv SampledValue
+// returns {-1, false} in case metric was not found in the slice
+func findSummaryValueIndex(metricSlice []*SummaryValue, name string, labelNames []string, labelValues []string) (int, bool) {
+	for i, m := range metricSlice {
+		if m.Name == name {
+			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
+				return i, true
+			}
+		}
+	}
+	return -1, false
+}
 
-	kLabels, ok := zotCounters[name] // known label names for the 'name' counter
-	err := sanityChecks(name, kLabels, ok, labelNames, labelValues)
+// returns {-1, false} in case metric was not found in the slice
+func findHistogramValueIndex(metricSlice []*HistogramValue, name string, labelNames []string, labelValues []string) (int, bool) {
+	for i, m := range metricSlice {
+		if m.Name == name {
+			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
+				return i, true
+			}
+		}
+	}
+	return -1, false
+}
+
+func (ms *metricServer) CounterInc(cv *CounterValue) {
+	kLabels, ok := zotCounters[cv.Name] // known label names for the 'name' counter
+	err := sanityChecks(cv.Name, kLabels, ok, cv.LabelNames, cv.LabelValues)
 	if err != nil {
-		fmt.Println(err) // The last thing we want is to panic/stop the server due to instrumentation
-		return           // thus log a message (should be detected during development of new metrics)
+		ms.log.Error().Err(err).Msg("Instrumentation error") // The last thing we want is to panic/stop the server due to instrumentation
+		return                                               // thus log a message (should be detected during development of new metrics)
 	}
 
-	inMemoryMetrics.mutex.Lock()
-	defer inMemoryMetrics.mutex.Unlock()
-	index, ok := findSampledValueIndex(inMemoryMetrics.Counters, name, labelNames, labelValues)
+	index, ok := findCounterValueIndex(ms.cache.Counters, cv.Name, cv.LabelNames, cv.LabelValues)
 	if !ok {
-		// The SampledValue not found: create one
-		sv = SampledValue{
-			Name:        name,
-			Count:       1, // First value, no need to increment
-			LabelNames:  labelNames,
-			LabelValues: labelValues,
-		}
-		inMemoryMetrics.Counters = append(inMemoryMetrics.Counters, sv)
+		// cv not found in cache: add it
+		cv.Count = 1
+		ms.cache.Counters = append(ms.cache.Counters, cv)
 	} else {
-		inMemoryMetrics.Counters[index].Count++
+		ms.cache.Counters[index].Count++
 	}
 }
 
-// Sets a gauge atomically
-func GaugeSet(name string, value float64, labelNames []string, labelValues []string) {
-	var gv GaugeValue
-
-	kLabels, ok := zotGauges[name] // known label names for the 'name' counter
-	err := sanityChecks(name, kLabels, ok, labelNames, labelValues)
+func (ms *metricServer) GaugeSet(gv *GaugeValue) {
+	kLabels, ok := zotGauges[gv.Name] // known label names for the 'name' counter
+	err := sanityChecks(gv.Name, kLabels, ok, gv.LabelNames, gv.LabelValues)
 	if err != nil {
-		fmt.Println(err) // The last thing we want is to panic/stop the server due to instrumentation
-		return           // thus log a message (should be detected during development of new metrics)
+		ms.log.Error().Err(err).Msg("Instrumentation error") // The last thing we want is to panic/stop the server due to instrumentation
+		return                                               // thus log a message (should be detected during development of new metrics)
 	}
 
-	inMemoryMetrics.mutex.Lock()
-	defer inMemoryMetrics.mutex.Unlock()
-	index, ok := findGaugeValueIndex(inMemoryMetrics.Gauges, name, labelNames, labelValues)
+	index, ok := findGaugeValueIndex(ms.cache.Gauges, gv.Name, gv.LabelNames, gv.LabelValues)
 	if !ok {
-		// The GaugeValue not found: create one
-		gv = GaugeValue{
-			Name:        name,
-			Value:       value,
-			LabelNames:  labelNames,
-			LabelValues: labelValues,
-		}
-		inMemoryMetrics.Gauges = append(inMemoryMetrics.Gauges, gv)
+		// gv not found in cache: add it
+		ms.cache.Gauges = append(ms.cache.Gauges, gv)
 	} else {
-		inMemoryMetrics.Gauges[index].Value = value
+		ms.cache.Gauges[index].Value = gv.Value
 	}
 }
 
-// Increments a summary counter & add to the summary sum atomically
-func SummaryObserve(name string, value float64, labelNames []string, labelValues []string) {
-	var sv SampledValue
-
-	kLabels, ok := zotSummaries[name] // known label names for the 'name' counter
-	err := sanityChecks(name, kLabels, ok, labelNames, labelValues)
+func (ms *metricServer) SummaryObserve(sv *SummaryValue) {
+	kLabels, ok := zotSummaries[sv.Name] // known label names for the 'name' summary
+	err := sanityChecks(sv.Name, kLabels, ok, sv.LabelNames, sv.LabelValues)
 	if err != nil {
-		fmt.Println(err) // The last thing we want is to panic/stop the server due to instrumentation
-		return           // thus log a message (should be detected during development of new metrics)
+		ms.log.Error().Err(err).Msg("Instrumentation error") // The last thing we want is to panic/stop the server due to instrumentation
+		return                                               // thus log a message (should be detected during development of new metrics)
 	}
 
-	inMemoryMetrics.mutex.Lock()
-	defer inMemoryMetrics.mutex.Unlock()
-	index, ok := findSampledValueIndex(inMemoryMetrics.Samples, name, labelNames, labelValues)
+	index, ok := findSummaryValueIndex(ms.cache.Summaries, sv.Name, sv.LabelNames, sv.LabelValues)
 	if !ok {
-		// The SampledValue not found: create one
-		sv = SampledValue{
-			Name:        name,
-			Count:       1, // First value, no need to increment
-			LabelNames:  labelNames,
-			LabelValues: labelValues,
-		}
-		inMemoryMetrics.Samples = append(inMemoryMetrics.Samples, sv)
+		// The SampledValue not found: add it
+		sv.Count = 1 // First value, no need to increment
+		ms.cache.Summaries = append(ms.cache.Summaries, sv)
 	} else {
-		inMemoryMetrics.Samples[index].Count++
-		inMemoryMetrics.Samples[index].Sum += value
+		ms.cache.Summaries[index].Count++
+		ms.cache.Summaries[index].Sum += sv.Sum
 	}
 }
 
-// Increments a summary counter & add to the summary sum atomically
-func HistogramObserve(name string, value float64, labelNames []string, labelValues []string) {
-	var sv SampledValue
-
-	kLabels, ok := zotHistograms[name] // known label names for the 'name' counter
-	err := sanityChecks(name, kLabels, ok, labelNames, labelValues)
+func (ms *metricServer) HistogramObserve(hv *HistogramValue) {
+	kLabels, ok := zotHistograms[hv.Name] // known label names for the 'name' counter
+	err := sanityChecks(hv.Name, kLabels, ok, hv.LabelNames, hv.LabelValues)
 	if err != nil {
-		fmt.Println(err) // The last thing we want is to panic/stop the server due to instrumentation
-		return           // thus log a message (should be detected during development of new metrics)
+		ms.log.Error().Err(err).Msg("Instrumentation error") // The last thing we want is to panic/stop the server due to instrumentation
+		return                                               // thus log a message (should be detected during development of new metrics)
 	}
 
-	inMemoryMetrics.mutex.Lock()
-	defer inMemoryMetrics.mutex.Unlock()
-	index, ok := findSampledValueIndex(inMemoryMetrics.Samples, name, labelNames, labelValues)
+	index, ok := findHistogramValueIndex(ms.cache.Histograms, hv.Name, hv.LabelNames, hv.LabelValues)
 	if !ok {
-		// The SampledValue not found: create one
+		// The HistogramValue not found: add it
 		buckets := make(map[string]int, 0)
 		for _, fvalue := range GetDefaultBuckets() {
-			if value <= fvalue {
+			if hv.Sum <= fvalue {
 				buckets[bucketsFloat2String[fvalue]] = 1
 			} else {
 				buckets[bucketsFloat2String[fvalue]] = 0
 			}
 		}
-		sv = SampledValue{
-			Name:        name,
-			Count:       1, // First value, no need to increment
-			Sum:         value,
-			LabelNames:  labelNames,
-			LabelValues: labelValues,
-			Buckets:     buckets,
-		}
-		inMemoryMetrics.Samples = append(inMemoryMetrics.Samples, sv)
+		hv.Count = 1 // First value, no need to increment
+		hv.Buckets = buckets
+		ms.cache.Histograms = append(ms.cache.Histograms, hv)
 	} else {
-		inMemoryMetrics.Samples[index].Count++
-		inMemoryMetrics.Samples[index].Sum += value
+		cachedH := ms.cache.Histograms[index]
+		cachedH.Count++
+		cachedH.Sum += hv.Sum
 		for _, fvalue := range GetDefaultBuckets() {
-			if value <= fvalue {
-				inMemoryMetrics.Samples[index].Buckets[bucketsFloat2String[fvalue]]++
+			if hv.Sum <= fvalue {
+				cachedH.Buckets[bucketsFloat2String[fvalue]]++
 			}
 		}
 	}
@@ -310,61 +382,87 @@ func sanityChecks(name string, knownLabels []string, found bool, labelNames []st
 	return nil
 }
 
-func IncHTTPConnRequests(lvs ...string) {
-	if metricsEnabled {
-		go CounterInc(httpConnRequests, []string{"method", "code"}, lvs)
-		// Check if we didn't receive a metrics scrape in a while and if so, disable metrics (possible node exporter down/crashed)
-		latency := time.Now().Sub(lastMetricsCheck)
-		if latency > metricsScrapeTimeout {
-			metricsEnabled = false
-		}
+func IncHTTPConnRequests(ms MetricServer, lvs ...string) {
+	req := CounterValue{
+		Name:        httpConnRequests,
+		LabelNames:  []string{"method", "code"},
+		LabelValues: lvs,
 	}
+	ms.SendMetric(req)
 }
 
-func ObserveHTTPRepoLatency(path string, latency time.Duration) {
-	if metricsEnabled {
+func ObserveHTTPRepoLatency(ms MetricServer, path string, latency time.Duration) {
+	if ms.(*metricServer).enabled {
 		re := regexp.MustCompile("\\/v2\\/(.*?)\\/(blobs|tags|manifests)\\/(.*)$")
 		match := re.FindStringSubmatch(path)
+		var lvs []string
 		if len(match) > 1 {
-			go SummaryObserve(httpRepoLatencySeconds, latency.Seconds(), []string{"repo"}, []string{match[1]})
+			lvs = []string{match[1]}
 		} else {
-			go SummaryObserve(httpRepoLatencySeconds, latency.Seconds(), []string{"repo"}, []string{"N/A"})
+			lvs = []string{"N/A"}
 		}
-	}
-}
-
-func ObserveHTTPMethodLatency(method string, latency time.Duration) {
-	if metricsEnabled {
-		go HistogramObserve(httpMethodLatencySeconds, latency.Seconds(), []string{"method"}, []string{method})
-	}
-}
-
-func IncDownloadCounter(repo string) {
-	if metricsEnabled {
-		go CounterInc(repoDownloads, []string{"repo"}, []string{repo})
-	}
-}
-
-func IncUploadCounter(repo string) {
-	if metricsEnabled {
-		go CounterInc(repoUploads, []string{"repo"}, []string{repo})
-	}
-}
-
-func SetStorageUsage(repo string, rootDir string) {
-	if metricsEnabled {
-		dir := path.Join(rootDir, repo)
-		repoSize, err := getDirSize(dir)
-
-		if err == nil {
-			go GaugeSet(repoStorageBytes, float64(repoSize), []string{"repo"}, []string{repo})
+		sv := SummaryValue{
+			Name:        httpRepoLatencySeconds,
+			Sum:         latency.Seconds(),
+			LabelNames:  []string{"repo"},
+			LabelValues: lvs,
 		}
+		ms.SendMetric(sv)
 	}
 }
 
-func SetZotInfo(lvs ...string) {
-	//  This metric is set once at zot startup (do not condition upon metricsEnabled!)
-	go GaugeSet(zotInfo, 0, []string{"commit", "binaryType", "goVersion", "version"}, lvs)
+func ObserveHTTPMethodLatency(ms MetricServer, method string, latency time.Duration) {
+	h := HistogramValue{
+		Name:        httpMethodLatencySeconds,
+		Sum:         latency.Seconds(), // convenient temporary store for Histogram latency value
+		LabelNames:  []string{"method"},
+		LabelValues: []string{method},
+	}
+	ms.SendMetric(h)
+}
+
+func IncDownloadCounter(ms MetricServer, repo string) {
+	dCounter := CounterValue{
+		Name:        repoDownloads,
+		LabelNames:  []string{"repo"},
+		LabelValues: []string{repo},
+	}
+	ms.SendMetric(dCounter)
+}
+
+func IncUploadCounter(ms MetricServer, repo string) {
+	uCounter := CounterValue{
+		Name:        repoUploads,
+		LabelNames:  []string{"repo"},
+		LabelValues: []string{repo},
+	}
+	ms.SendMetric(uCounter)
+}
+
+func SetStorageUsage(ms MetricServer, rootDir string, repo string) {
+	dir := path.Join(rootDir, repo)
+	repoSize, err := getDirSize(dir)
+	if err != nil {
+		ms.(*metricServer).log.Error().Err(err).Msg("failed to set storage usage")
+	}
+	storage := GaugeValue{
+		Name:        repoStorageBytes,
+		Value:       float64(repoSize),
+		LabelNames:  []string{"repo"},
+		LabelValues: []string{repo},
+	}
+	ms.ForceSendMetric(storage)
+}
+
+func SetZotInfo(ms MetricServer, lvs ...string) {
+	info := GaugeValue{
+		Name:        zotInfo,
+		Value:       0,
+		LabelNames:  []string{"commit", "binaryType", "goVersion", "version"},
+		LabelValues: lvs,
+	}
+	// This metric is set once at zot startup (set it regardless of metrics enabled)
+	ms.ForceSendMetric(info)
 }
 
 // Used by the zot exporter

@@ -53,7 +53,17 @@ func (zc ZotCollector) Collect(ch chan<- prometheus.Metric) {
 			zc.MetricsDesc[name], prometheus.CounterValue, float64(c.Count), c.LabelValues...)
 	}
 
-	for _, s := range metrics.Samples {
+	for _, s := range metrics.Summaries {
+		mname := invalidChars.ReplaceAllLiteralString(s.Name, "_")
+		name := mname + "_count"
+		ch <- prometheus.MustNewConstMetric(
+			zc.MetricsDesc[name], prometheus.CounterValue, float64(s.Count), s.LabelValues...)
+		name = mname + "_sum"
+		ch <- prometheus.MustNewConstMetric(
+			zc.MetricsDesc[name], prometheus.CounterValue, s.Sum, s.LabelValues...)
+	}
+
+	for _, s := range metrics.Histograms {
 		mname := invalidChars.ReplaceAllLiteralString(s.Name, "_")
 		name := mname + "_count"
 		ch <- prometheus.MustNewConstMetric(

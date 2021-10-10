@@ -12,6 +12,7 @@ import (
 
 	"github.com/anuvu/zot/pkg/api"
 	ext "github.com/anuvu/zot/pkg/extensions"
+	"github.com/anuvu/zot/pkg/extensions/monitoring"
 	"github.com/anuvu/zot/pkg/extensions/search/common"
 	"github.com/anuvu/zot/pkg/log"
 	"github.com/anuvu/zot/pkg/storage"
@@ -439,9 +440,10 @@ func TestUtilsMethod(t *testing.T) {
 		}
 		defer os.RemoveAll(subRootDir)
 
-		defaultStore := storage.NewImageStore(rootDir, false, false, log)
+		metrics := monitoring.NewMetricsServer(false, log)
+		defaultStore := storage.NewImageStore(rootDir, false, false, log, metrics)
 
-		subStore := storage.NewImageStore(subRootDir, false, false, log)
+		subStore := storage.NewImageStore(subRootDir, false, false, log, metrics)
 
 		subStoreMap := make(map[string]*storage.ImageStore)
 
