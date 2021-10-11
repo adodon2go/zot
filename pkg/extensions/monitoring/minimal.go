@@ -3,14 +3,13 @@
 package monitoring
 
 import (
-	"errors"
-	"fmt"
 	"math"
 	"path"
 	"regexp"
 	"strconv"
 	"time"
 
+	"github.com/anuvu/zot/errors"
 	"github.com/anuvu/zot/pkg/log"
 )
 
@@ -32,12 +31,13 @@ const (
 )
 
 type metricServer struct {
-	enabled   bool
-	lastCheck time.Time
-	reqChan   chan interface{}
-	cache     *MetricsInfo
-	cacheChan chan *MetricsInfo
-	log       log.Logger
+	enabled    bool
+	lastCheck  time.Time
+	reqChan    chan interface{}
+	cache      *MetricsInfo
+	cacheChan  chan *MetricsInfo
+	bucketsF2S map[float64]string // float64 to string conversion of buckets label
+	log        log.Logger
 }
 
 type MetricsInfo struct {
@@ -46,13 +46,6 @@ type MetricsInfo struct {
 	Summaries  []*SummaryValue
 	Histograms []*HistogramValue
 }
-
-var zotCounters map[string][]string
-var zotGauges map[string][]string
-var zotSummaries map[string][]string
-var zotHistograms map[string][]string
-
-var bucketsFloat2String map[float64]string
 
 // CounterValue stores info about a metric that is incremented over time,
 // such as the number of requests to an HTTP endpoint.
@@ -107,6 +100,7 @@ func (ms *metricServer) ReceiveMetrics() interface{} {
 		ms.enabled = true
 	}
 	ms.cacheChan <- &MetricsInfo{}
+
 	return <-ms.cacheChan
 }
 
@@ -120,6 +114,7 @@ func (ms *metricServer) Run() {
 			sendAfter <- t
 		}
 	}()
+
 	for {
 		select {
 		case <-ms.cacheChan:
@@ -143,9 +138,10 @@ func (ms *metricServer) Run() {
 				ms.log.Fatal().Msgf("unexpected type %T", v)
 			}
 		case <-sendAfter:
-			// Check if we didn't receive a metrics scrape in a while and if so, disable metrics (possible node exporter down/crashed)
+			// Check if we didn't receive a metrics scrape in a while and if so,
+			// disable metrics (possible node exporter down/crashed)
 			if ms.enabled {
-				lastCheckInterval := time.Now().Sub(ms.lastCheck)
+				lastCheckInterval := time.Since(ms.lastCheck)
 				if lastCheckInterval > metricsScrapeTimeout {
 					ms.enabled = false
 				}
@@ -161,41 +157,9 @@ func NewMetricsServer(enabled bool, log log.Logger) MetricServer {
 		Summaries:  make([]*SummaryValue, 0),
 		Histograms: make([]*HistogramValue, 0),
 	}
-	ms := &metricServer{
-		enabled:   enabled,
-		reqChan:   make(chan interface{}),
-		cacheChan: make(chan *MetricsInfo),
-		cache:     mi,
-		log:       log,
-	}
-	go ms.Run()
-	return ms
-}
-
-func init() {
-	// contains a map with key=CounterName and value=CounterLabels
-	zotCounters = map[string][]string{
-		httpConnRequests: []string{"method", "code"},
-		repoDownloads:    []string{"repo"},
-		repoUploads:      []string{"repo"},
-	}
-	// contains a map with key=CounterName and value=CounterLabels
-	zotGauges = map[string][]string{
-		repoStorageBytes: []string{"repo"},
-		zotInfo:          []string{"commit", "binaryType", "goVersion", "version"},
-	}
-
-	// contains a map with key=CounterName and value=CounterLabels
-	zotSummaries = map[string][]string{
-		httpRepoLatencySeconds: []string{"repo"},
-	}
-
-	zotHistograms = map[string][]string{
-		httpMethodLatencySeconds: []string{"method"},
-	}
-
 	// convert to a map for returning easily the string corresponding to a bucket
-	bucketsFloat2String = map[float64]string{}
+	bucketsFloat2String := map[float64]string{}
+
 	for _, fvalue := range GetDefaultBuckets() {
 		if fvalue == math.MaxFloat64 {
 			bucketsFloat2String[fvalue] = "+Inf"
@@ -204,20 +168,57 @@ func init() {
 			bucketsFloat2String[fvalue] = s
 		}
 	}
+
+	ms := &metricServer{
+		enabled:    enabled,
+		reqChan:    make(chan interface{}),
+		cacheChan:  make(chan *MetricsInfo),
+		cache:      mi,
+		bucketsF2S: bucketsFloat2String,
+		log:        log,
+	}
+
+	go ms.Run()
+
+	return ms
 }
 
-func GetMetricCounters() map[string][]string   { return zotCounters }
-func GetMetricGauges() map[string][]string     { return zotGauges }
-func GetMetricSummaries() map[string][]string  { return zotSummaries }
-func GetMetricHistograms() map[string][]string { return zotHistograms }
+// contains a map with key=CounterName and value=CounterLabels.
+func GetCounters() map[string][]string {
+	return map[string][]string{
+		httpConnRequests: {"method", "code"},
+		repoDownloads:    {"repo"},
+		repoUploads:      {"repo"},
+	}
+}
 
-// return true if a metric does not have any labels or
-// if the label values for searched metric corresponds to the one in the cached slice
+func GetGauges() map[string][]string {
+	return map[string][]string{
+		repoStorageBytes: {"repo"},
+		zotInfo:          {"commit", "binaryType", "goVersion", "version"},
+	}
+}
+
+func GetSummaries() map[string][]string {
+	return map[string][]string{
+		httpRepoLatencySeconds: {"repo"},
+	}
+}
+
+func GetHistograms() map[string][]string {
+	return map[string][]string{
+		httpMethodLatencySeconds: {"method"},
+	}
+}
+
+// return true if a metric does not have any labels or if the label
+// values for searched metric corresponds to the one in the cached slice.
 func isMetricMatch(lNames []string, lValues []string, metricValues []string) bool {
 	if lNames == nil && lValues == nil {
 		// metric does not contain any labels
 		return true
 	}
+
 	if len(lValues) == len(metricValues) {
 		for i, v := range metricValues {
 			if v != lValues[i] {
@@ -225,11 +226,13 @@ func isMetricMatch(lNames []string, lValues []string, metricValues []string) boo
 			}
 		}
 	}
+
 	return true
 }
 
-// returns {-1, false} in case metric was not found in the slice
-func findCounterValueIndex(metricSlice []*CounterValue, name string, labelNames []string, labelValues []string) (int, bool) {
+// returns {-1, false} in case metric was not found in the slice.
+func findCounterValueIndex(metricSlice []*CounterValue, name string,
+	labelNames []string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
 			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
@@ -237,11 +240,13 @@ func findCounterValueIndex(metricSlice []*CounterValue, name string, labelNames 
 			}
 		}
 	}
+
 	return -1, false
 }
 
-// returns {-1, false} in case metric was not found in the slice
-func findGaugeValueIndex(metricSlice []*GaugeValue, name string, labelNames []string, labelValues []string) (int, bool) {
+// returns {-1, false} in case metric was not found in the slice.
+func findGaugeValueIndex(metricSlice []*GaugeValue, name string,
+	labelNames []string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
 			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
@@ -249,11 +254,13 @@ func findGaugeValueIndex(metricSlice []*GaugeValue, name string, labelNames []st
 			}
 		}
 	}
+
 	return -1, false
 }
 
-// returns {-1, false} in case metric was not found in the slice
-func findSummaryValueIndex(metricSlice []*SummaryValue, name string, labelNames []string, labelValues []string) (int, bool) {
+// returns {-1, false} in case metric was not found in the slice.
+func findSummaryValueIndex(metricSlice []*SummaryValue, name string,
+	labelNames []string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
 			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
@@ -261,11 +268,13 @@ func findSummaryValueIndex(metricSlice []*SummaryValue, name string, labelNames 
 			}
 		}
 	}
+
 	return -1, false
 }
 
-// returns {-1, false} in case metric was not found in the slice
-func findHistogramValueIndex(metricSlice []*HistogramValue, name string, labelNames []string, labelValues []string) (int, bool) {
+// returns {-1, false} in case metric was not found in the slice.
+func findHistogramValueIndex(metricSlice []*HistogramValue, name string,
+	labelNames []string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
 			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
@@ -273,15 +282,19 @@ func findHistogramValueIndex(metricSlice []*HistogramValue, name string, labelNa
 			}
 		}
 	}
+
 	return -1, false
 }
 
 func (ms *metricServer) CounterInc(cv *CounterValue) {
-	kLabels, ok := zotCounters[cv.Name] // known label names for the 'name' counter
+	kLabels, ok := GetCounters()[cv.Name] // known label names for the 'name' counter
 	err := sanityChecks(cv.Name, kLabels, ok, cv.LabelNames, cv.LabelValues)
+
 	if err != nil {
-		ms.log.Error().Err(err).Msg("Instrumentation error") // The last thing we want is to panic/stop the server due to instrumentation
-		return                                               // thus log a message (should be detected during development of new metrics)
+		// The last thing we want is to panic/stop the server due to instrumentation
+		// thus log a message (should be detected during development of new metrics)
+		ms.log.Error().Err(err).Msg("Instrumentation error")
+		return
 	}
 
 	index, ok := findCounterValueIndex(ms.cache.Counters, cv.Name, cv.LabelNames, cv.LabelValues)
@@ -295,11 +308,12 @@ func (ms *metricServer) CounterInc(cv *CounterValue) {
 }
 
 func (ms *metricServer) GaugeSet(gv *GaugeValue) {
-	kLabels, ok := zotGauges[gv.Name] // known label names for the 'name' counter
+	kLabels, ok := GetGauges()[gv.Name] // known label names for the 'name' counter
 	err := sanityChecks(gv.Name, kLabels, ok, gv.LabelNames, gv.LabelValues)
+
 	if err != nil {
-		ms.log.Error().Err(err).Msg("Instrumentation error") // The last thing we want is to panic/stop the server due to instrumentation
-		return                                               // thus log a message (should be detected during development of new metrics)
+		ms.log.Error().Err(err).Msg("Instrumentation error")
+		return
 	}
 
 	index, ok := findGaugeValueIndex(ms.cache.Gauges, gv.Name, gv.LabelNames, gv.LabelValues)
@@ -312,11 +326,12 @@ func (ms *metricServer) GaugeSet(gv *GaugeValue) {
 }
 
 func (ms *metricServer) SummaryObserve(sv *SummaryValue) {
-	kLabels, ok := zotSummaries[sv.Name] // known label names for the 'name' summary
+	kLabels, ok := GetSummaries()[sv.Name] // known label names for the 'name' summary
 	err := sanityChecks(sv.Name, kLabels, ok, sv.LabelNames, sv.LabelValues)
+
 	if err != nil {
-		ms.log.Error().Err(err).Msg("Instrumentation error") // The last thing we want is to panic/stop the server due to instrumentation
-		return                                               // thus log a message (should be detected during development of new metrics)
+		ms.log.Error().Err(err).Msg("Instrumentation error")
+		return
 	}
 
 	index, ok := findSummaryValueIndex(ms.cache.Summaries, sv.Name, sv.LabelNames, sv.LabelValues)
@@ -331,24 +346,27 @@ func (ms *metricServer) SummaryObserve(sv *SummaryValue) {
 }
 
 func (ms *metricServer) HistogramObserve(hv *HistogramValue) {
-	kLabels, ok := zotHistograms[hv.Name] // known label names for the 'name' counter
+	kLabels, ok := GetHistograms()[hv.Name] // known label names for the 'name' counter
 	err := sanityChecks(hv.Name, kLabels, ok, hv.LabelNames, hv.LabelValues)
+
 	if err != nil {
-		ms.log.Error().Err(err).Msg("Instrumentation error") // The last thing we want is to panic/stop the server due to instrumentation
-		return                                               // thus log a message (should be detected during development of new metrics)
+		ms.log.Error().Err(err).Msg("Instrumentation error")
+		return
 	}
 
 	index, ok := findHistogramValueIndex(ms.cache.Histograms, hv.Name, hv.LabelNames, hv.LabelValues)
 	if !ok {
 		// The HistogramValue not found: add it
-		buckets := make(map[string]int, 0)
+		buckets := make(map[string]int)
+
 		for _, fvalue := range GetDefaultBuckets() {
 			if hv.Sum <= fvalue {
-				buckets[bucketsFloat2String[fvalue]] = 1
+				buckets[ms.bucketsF2S[fvalue]] = 1
 			} else {
-				buckets[bucketsFloat2String[fvalue]] = 0
+				buckets[ms.bucketsF2S[fvalue]] = 0
 			}
 		}
+
 		hv.Count = 1 // First value, no need to increment
 		hv.Buckets = buckets
 		ms.cache.Histograms = append(ms.cache.Histograms, hv)
@@ -358,7 +376,7 @@ func (ms *metricServer) HistogramObserve(hv *HistogramValue) {
 		cachedH.Sum += hv.Sum
 		for _, fvalue := range GetDefaultBuckets() {
 			if hv.Sum <= fvalue {
-				cachedH.Buckets[bucketsFloat2String[fvalue]]++
+				cachedH.Buckets[ms.bucketsF2S[fvalue]]++
 			}
 		}
 	}
@@ -366,19 +384,20 @@ func (ms *metricServer) HistogramObserve(hv *HistogramValue) {
 
 func sanityChecks(name string, knownLabels []string, found bool, labelNames []string, labelValues []string) error {
 	if !found {
-		return errors.New(fmt.Sprintf("Metric %s not found", name))
+		return errors.ErrMetricNotFound(name)
 	}
 
 	if len(labelNames) != len(labelValues) ||
 		len(labelNames) != len(knownLabels) {
-		return errors.New(fmt.Sprintf("Metric %s : label size mismatch", name))
+		return errors.ErrLabelSize(name)
 	}
 	// The list of label names defined in init() for the counter must match what was provided in labelNames
 	for i, label := range labelNames {
 		if label != knownLabels[i] {
-			return errors.New(fmt.Sprintf("Metric %s : label order mismatch", name))
+			return errors.ErrLabelOrder(name)
 		}
 	}
+
 	return nil
 }
 
@@ -393,14 +412,17 @@ func IncHTTPConnRequests(ms MetricServer, lvs ...string) {
 
 func ObserveHTTPRepoLatency(ms MetricServer, path string, latency time.Duration) {
 	if ms.(*metricServer).enabled {
-		re := regexp.MustCompile("\\/v2\\/(.*?)\\/(blobs|tags|manifests)\\/(.*)$")
-		match := re.FindStringSubmatch(path)
 		var lvs []string
+
+		re := regexp.MustCompile(`\/v2\/(.*?)\/(blobs|tags|manifests)\/(.*)$`)
+		match := re.FindStringSubmatch(path)
+
 		if len(match) > 1 {
 			lvs = []string{match[1]}
 		} else {
 			lvs = []string{"N/A"}
 		}
+
 		sv := SummaryValue{
 			Name:        httpRepoLatencySeconds,
 			Sum:         latency.Seconds(),
@@ -442,9 +464,11 @@ func IncUploadCounter(ms MetricServer, repo string) {
 func SetStorageUsage(ms MetricServer, rootDir string, repo string) {
 	dir := path.Join(rootDir, repo)
 	repoSize, err := getDirSize(dir)
+
 	if err != nil {
 		ms.(*metricServer).log.Error().Err(err).Msg("failed to set storage usage")
 	}
+
 	storage := GaugeValue{
 		Name:        repoStorageBytes,
 		Value:       float64(repoSize),
@@ -463,9 +487,4 @@ func SetZotInfo(ms MetricServer, lvs ...string) {
 	}
 	// This metric is set once at zot startup (set it regardless of metrics enabled)
 	ms.ForceSendMetric(info)
-}
-
-// Used by the zot exporter
-func BucketConvFloat2String(b float64) string {
-	return bucketsFloat2String[b]
 }

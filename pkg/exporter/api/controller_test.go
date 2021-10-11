@@ -4,6 +4,7 @@ package api_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -38,6 +39,7 @@ func getFreePort() string {
 	if err != nil {
 		panic(err)
 	}
+
 	return fmt.Sprint(port)
 }
 
@@ -52,7 +54,7 @@ func TestNew(t *testing.T) {
 func isChannelDrained(ch chan prometheus.Metric) bool {
 	time.Sleep(SleepTime)
 	select {
-	case _ = <-ch:
+	case <-ch:
 		return false
 	default:
 		return true
@@ -65,13 +67,15 @@ func readDefaultMetrics(zc *api.ZotCollector, ch chan prometheus.Metric) {
 	pm := <-ch
 	So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_up"].String())
 
-	pm.Write(&metric)
+	err := pm.Write(&metric)
+	So(err, ShouldBeNil)
 	So(*metric.Gauge.Value, ShouldEqual, 1)
 
 	pm = <-ch
 	So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_info"].String())
 
-	pm.Write(&metric)
+	err = pm.Write(&metric)
+	So(err, ShouldBeNil)
 	So(*metric.Gauge.Value, ShouldEqual, 0)
 }
 
@@ -108,7 +112,8 @@ func TestNewExporter(t *testing.T) {
 				So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_up"].String())
 
 				var metric dto.Metric
-				pm.Write(&metric)
+				err := pm.Write(&metric)
+				So(err, ShouldBeNil)
 				So(*metric.Gauge.Value, ShouldEqual, 0) // "zot_up=0" means zot server is not running
 
 				// Check that no more data was written to the channel
@@ -128,7 +133,7 @@ func TestNewExporter(t *testing.T) {
 				serverController.Config.Storage.RootDirectory = dir
 				go func(c *zotapi.Controller) {
 					// this blocks
-					if err := c.Run(); err != http.ErrServerClosed {
+					if err := c.Run(); !errors.Is(err, http.ErrServerClosed) {
 						panic(err)
 					}
 				}(serverController)
@@ -174,7 +179,8 @@ func TestNewExporter(t *testing.T) {
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_uploads_total"].String())
 
 					var metric dto.Metric
-					pm.Write(&metric)
+					err := pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, 1)
 
 					So(isChannelDrained(ch), ShouldEqual, true)
@@ -192,7 +198,8 @@ func TestNewExporter(t *testing.T) {
 					pm = <-ch
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_uploads_total"].String())
 
-					pm.Write(&metric)
+					err = pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, 2)
 
 					So(isChannelDrained(ch), ShouldEqual, true)
@@ -213,7 +220,8 @@ func TestNewExporter(t *testing.T) {
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_downloads_total"].String())
 
 					var metric dto.Metric
-					pm.Write(&metric)
+					err := pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, reqsSize)
 
 					So(isChannelDrained(ch), ShouldEqual, true)
@@ -235,13 +243,15 @@ func TestNewExporter(t *testing.T) {
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_count"].String())
 
 					var metric dto.Metric
-					pm.Write(&metric)
+					err := pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, 1)
 
 					pm = <-ch
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_sum"].String())
 
-					pm.Write(&metric)
+					err = pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, latency1.Seconds())
 
 					So(isChannelDrained(ch), ShouldEqual, true)
@@ -260,13 +270,15 @@ func TestNewExporter(t *testing.T) {
 					pm = <-ch
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_count"].String())
 
-					pm.Write(&metric)
+					err = pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, 2)
 
 					pm = <-ch
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_sum"].String())
 
-					pm.Write(&metric)
+					err = pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, (latency1.Seconds())+(latency2.Seconds()))
 
 					So(isChannelDrained(ch), ShouldEqual, true)
@@ -291,13 +303,15 @@ func TestNewExporter(t *testing.T) {
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_count"].String())
 
 					var metric dto.Metric
-					pm.Write(&metric)
+					err := pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, reqsSize)
 
 					pm = <-ch
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_repo_latency_seconds_sum"].String())
 
-					pm.Write(&metric)
+					err = pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, latencySum)
 
 					So(isChannelDrained(ch), ShouldEqual, true)
@@ -318,20 +332,23 @@ func TestNewExporter(t *testing.T) {
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_method_latency_seconds_count"].String())
 
 					var metric dto.Metric
-					pm.Write(&metric)
+					err := pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, 1)
 
 					pm = <-ch
 					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_method_latency_seconds_sum"].String())
 
-					pm.Write(&metric)
+					err = pm.Write(&metric)
+					So(err, ShouldBeNil)
 					So(*metric.Counter.Value, ShouldEqual, latency.Seconds())
 
 					for _, fvalue := range monitoring.GetDefaultBuckets() {
 						pm = <-ch
 						So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_method_latency_seconds_bucket"].String())
 
-						pm.Write(&metric)
+						err = pm.Write(&metric)
+						So(err, ShouldBeNil)
 						if latency.Seconds() < fvalue {
 							So(*metric.Counter.Value, ShouldEqual, 1)
 						} else {
