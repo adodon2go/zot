@@ -1,3 +1,5 @@
+// +build extended
+
 package common_test
 
 import (
