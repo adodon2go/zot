@@ -3,13 +3,13 @@
 package monitoring
 
 import (
+	"fmt"
 	"math"
 	"path"
 	"regexp"
 	"strconv"
 	"time"
 
-	"github.com/anuvu/zot/errors"
 	"github.com/anuvu/zot/pkg/log"
 )
 
@@ -381,19 +381,20 @@ func (ms *metricServer) HistogramObserve(hv *HistogramValue) {
 	}
 }
 
+// nolint: goerr113
 func sanityChecks(name string, knownLabels []string, found bool, labelNames []string, labelValues []string) error {
 	if !found {
-		return errors.ErrMetricNotFound(name)
+		return fmt.Errorf("metric %s: not found", name)
 	}
 
 	if len(labelNames) != len(labelValues) ||
 		len(labelNames) != len(knownLabels) {
-		return errors.ErrLabelSize(name)
+		return fmt.Errorf("metric %s: label size mismatch", name)
 	}
 	// The list of label names defined in init() for the counter must match what was provided in labelNames
 	for i, label := range labelNames {
 		if label != knownLabels[i] {
-			return errors.ErrLabelOrder(name)
+			return fmt.Errorf("metric %s: label size mismatch", name)
 		}
 	}
 

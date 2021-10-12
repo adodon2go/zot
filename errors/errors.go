@@ -1,10 +1,6 @@
-// nolint: goerr113
 package errors
 
-import (
-	"errors"
-	"fmt"
-)
+import "errors"
 
 var (
 	ErrBadConfig               = errors.New("config: invalid config")
@@ -47,15 +43,3 @@ var (
 	ErrEmptyValue              = errors.New("cache: empty value")
 	ErrEmptyRepoList           = errors.New("search: no repository found")
 )
-
-func ErrMetricNotFound(name string) error {
-	return fmt.Errorf("metric %s: not found", name)
-}
-
-func ErrLabelSize(name string) error {
-	return fmt.Errorf("metric %s: label size mismatch", name)
-}
-
-func ErrLabelOrder(name string) error {
-	return fmt.Errorf("metric %s: label order mismatch", name)
-}
