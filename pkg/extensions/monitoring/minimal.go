@@ -26,8 +26,8 @@ const (
 	//Histogram
 	httpMethodLatencySeconds = "zot.method.latency.seconds"
 
-	metricsScrapeTimeout       = 5 * time.Minute
-	metricsScrapeCheckInterval = 80 * time.Second
+	metricsScrapeTimeout       = 2 * time.Minute
+	metricsScrapeCheckInterval = 30 * time.Second
 )
 
 type metricServer struct {
@@ -104,6 +104,12 @@ func (ms *metricServer) ReceiveMetrics() interface{} {
 	return <-ms.cacheChan
 }
 
+func (ms *metricServer) IsEnabled() (b bool) {
+	// send a bool value on the request channel to avoid data race
+	ms.reqChan <- b
+	return (<-ms.reqChan).(bool)
+}
+
 func (ms *metricServer) Run() {
 	sendAfter := make(chan time.Duration, 1)
 	// periodically send a notification to the metric server to check if we can disable metrics
@@ -134,8 +140,10 @@ func (ms *metricServer) Run() {
 			case HistogramValue:
 				hv := m.(HistogramValue)
 				ms.HistogramObserve(&hv)
+			case bool:
+				ms.reqChan <- ms.enabled
 			default:
-				ms.log.Fatal().Msgf("unexpected type %T", v)
+				ms.log.Error().Msgf("unexpected type %T", v)
 			}
 		case <-sendAfter:
 			// Check if we didn't receive a metrics scrape in a while and if so,
@@ -213,12 +221,7 @@ func GetHistograms() map[string][]string {
 
 // return true if a metric does not have any labels or if the label
 // values for searched metric corresponds to the one in the cached slice.
-func isMetricMatch(lNames []string, lValues []string, metricValues []string) bool {
-	if lNames == nil && lValues == nil {
-		// metric does not contain any labels
-		return true
-	}
-
+func isMetricMatch(lValues []string, metricValues []string) bool {
 	if len(lValues) == len(metricValues) {
 		for i, v := range metricValues {
 			if v != lValues[i] {
@@ -231,11 +234,10 @@ func isMetricMatch(lNames []string, lValues []string, metricValues []string) boo
 }
 
 // returns {-1, false} in case metric was not found in the slice.
-func findCounterValueIndex(metricSlice []*CounterValue, name string,
-	labelNames []string, labelValues []string) (int, bool) {
+func findCounterValueIndex(metricSlice []*CounterValue, name string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
-			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
+			if isMetricMatch(labelValues, m.LabelValues) {
 				return i, true
 			}
 		}
@@ -245,11 +247,10 @@ func findCounterValueIndex(metricSlice []*CounterValue, name string,
 }
 
 // returns {-1, false} in case metric was not found in the slice.
-func findGaugeValueIndex(metricSlice []*GaugeValue, name string,
-	labelNames []string, labelValues []string) (int, bool) {
+func findGaugeValueIndex(metricSlice []*GaugeValue, name string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
-			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
+			if isMetricMatch(labelValues, m.LabelValues) {
 				return i, true
 			}
 		}
@@ -259,11 +260,10 @@ func findGaugeValueIndex(metricSlice []*GaugeValue, name string,
 }
 
 // returns {-1, false} in case metric was not found in the slice.
-func findSummaryValueIndex(metricSlice []*SummaryValue, name string,
-	labelNames []string, labelValues []string) (int, bool) {
+func findSummaryValueIndex(metricSlice []*SummaryValue, name string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
-			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
+			if isMetricMatch(labelValues, m.LabelValues) {
 				return i, true
 			}
 		}
@@ -273,11 +273,10 @@ func findSummaryValueIndex(metricSlice []*SummaryValue, name string,
 }
 
 // returns {-1, false} in case metric was not found in the slice.
-func findHistogramValueIndex(metricSlice []*HistogramValue, name string,
-	labelNames []string, labelValues []string) (int, bool) {
+func findHistogramValueIndex(metricSlice []*HistogramValue, name string, labelValues []string) (int, bool) {
 	for i, m := range metricSlice {
 		if m.Name == name {
-			if isMetricMatch(labelNames, labelValues, m.LabelValues) {
+			if isMetricMatch(labelValues, m.LabelValues) {
 				return i, true
 			}
 		}
@@ -297,7 +296,7 @@ func (ms *metricServer) CounterInc(cv *CounterValue) {
 		return
 	}
 
-	index, ok := findCounterValueIndex(ms.cache.Counters, cv.Name, cv.LabelNames, cv.LabelValues)
+	index, ok := findCounterValueIndex(ms.cache.Counters, cv.Name, cv.LabelValues)
 	if !ok {
 		// cv not found in cache: add it
 		cv.Count = 1
@@ -316,7 +315,7 @@ func (ms *metricServer) GaugeSet(gv *GaugeValue) {
 		return
 	}
 
-	index, ok := findGaugeValueIndex(ms.cache.Gauges, gv.Name, gv.LabelNames, gv.LabelValues)
+	index, ok := findGaugeValueIndex(ms.cache.Gauges, gv.Name, gv.LabelValues)
 	if !ok {
 		// gv not found in cache: add it
 		ms.cache.Gauges = append(ms.cache.Gauges, gv)
@@ -334,7 +333,7 @@ func (ms *metricServer) SummaryObserve(sv *SummaryValue) {
 		return
 	}
 
-	index, ok := findSummaryValueIndex(ms.cache.Summaries, sv.Name, sv.LabelNames, sv.LabelValues)
+	index, ok := findSummaryValueIndex(ms.cache.Summaries, sv.Name, sv.LabelValues)
 	if !ok {
 		// The SampledValue not found: add it
 		sv.Count = 1 // First value, no need to increment
@@ -354,7 +353,7 @@ func (ms *metricServer) HistogramObserve(hv *HistogramValue) {
 		return
 	}
 
-	index, ok := findHistogramValueIndex(ms.cache.Histograms, hv.Name, hv.LabelNames, hv.LabelValues)
+	index, ok := findHistogramValueIndex(ms.cache.Histograms, hv.Name, hv.LabelValues)
 	if !ok {
 		// The HistogramValue not found: add it
 		buckets := make(map[string]int)
@@ -487,4 +486,8 @@ func SetZotInfo(ms MetricServer, lvs ...string) {
 	}
 	// This metric is set once at zot startup (set it regardless of metrics enabled)
 	ms.ForceSendMetric(info)
+}
+
+func GetMaxIdleScrapeInterval() time.Duration {
+	return metricsScrapeTimeout + metricsScrapeCheckInterval
 }

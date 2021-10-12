@@ -705,7 +705,7 @@ func TestNegativeCases(t *testing.T) {
 		So(err, ShouldNotBeNil)
 	})
 
-	Convey("Invalid dedupe sceanrios", t, func() {
+	Convey("Invalid dedupe scenarios", t, func() {
 		dir, err := ioutil.TempDir("", "oci-repo-test")
 		if err != nil {
 			panic(err)

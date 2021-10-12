@@ -5,12 +5,9 @@ package monitoring
 import (
 	"crypto/tls"
 	"encoding/json"
-	"errors"
-	"io/ioutil"
 	"net/http"
 	"time"
 
-	zotErrors "github.com/anuvu/zot/errors"
 	"github.com/anuvu/zot/pkg/log"
 )
 
@@ -80,16 +77,6 @@ func (mc *MetricsClient) makeGETRequest(url string, resultsPtr interface{}) (htt
 	}
 
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, zotErrors.ErrUnauthorizedAccess
-		}
-
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
-
-		return nil, errors.New(string(bodyBytes)) //nolint: goerr113
-	}
 
 	if err := json.NewDecoder(resp.Body).Decode(resultsPtr); err != nil {
 		return nil, err

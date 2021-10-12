@@ -103,6 +103,10 @@ func (ms *metricServer) ReceiveMetrics() interface{} {
 	return nil
 }
 
+func (ms *metricServer) IsEnabled() bool {
+	return ms.enabled
+}
+
 func IncHTTPConnRequests(ms MetricServer, lvalues ...string) {
 	ms.SendMetric(func() {
 		httpConnRequests.WithLabelValues(lvalues...).Inc()

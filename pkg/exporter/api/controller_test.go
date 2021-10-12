@@ -11,12 +11,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	zotapi "github.com/anuvu/zot/pkg/api"
 	"github.com/anuvu/zot/pkg/exporter/api"
 	"github.com/anuvu/zot/pkg/extensions/monitoring"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/phayes/freeport"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -25,13 +27,18 @@ import (
 )
 
 const (
-	BaseURL   = "http://127.0.0.1:%s"
-	SleepTime = 50 * time.Millisecond
+	BaseURL             = "http://127.0.0.1:%s"
+	SleepTime           = 50 * time.Millisecond
+	SecondToNanoseconds = 1000000000
 )
 
-func getRandomLatency() time.Duration {
+func getRandomLatencyN(maxNanoSeconds int64) time.Duration {
 	rand.Seed(time.Now().UnixNano())
-	return time.Duration(rand.Intn(120 * 1000000)) // a random latency (in nanoseconds) that can be up to 2 minutes
+	return time.Duration(rand.Int63n(maxNanoSeconds))
+}
+
+func getRandomLatency() time.Duration {
+	return getRandomLatencyN(120 * SecondToNanoseconds) // a random latency (in nanoseconds) that can be up to 2 minutes
 }
 
 func getFreePort() string {
@@ -357,6 +364,117 @@ func TestNewExporter(t *testing.T) {
 					}
 
 					So(isChannelDrained(ch), ShouldEqual, true)
+				})
+				Convey("Collecting data: Test init Histogram buckets \n", func() {
+					//Generate a random  latency within each bucket and finally test
+					// that "higher" rank bucket counter is incremented by 1
+					var latencySum float64
+
+					dBuckets := monitoring.GetDefaultBuckets()
+					for i, fvalue := range dBuckets {
+						var latency time.Duration
+						if i == 0 {
+							//first bucket value
+							latency = getRandomLatencyN(int64(fvalue * SecondToNanoseconds))
+						} else {
+							pvalue := dBuckets[i-1] // previous bucket value
+							latency = time.Duration(pvalue*SecondToNanoseconds) +
+								getRandomLatencyN(int64(dBuckets[0]*SecondToNanoseconds))
+						}
+						latencySum += latency.Seconds()
+						monitoring.ObserveHTTPMethodLatency(serverController.Metrics, "GET", latency)
+					}
+					time.Sleep(SleepTime)
+
+					go func() {
+						//this blocks
+						zc.Collect(ch)
+					}()
+					readDefaultMetrics(zc, ch)
+
+					pm := <-ch
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_method_latency_seconds_count"].String())
+
+					var metric dto.Metric
+					err := pm.Write(&metric)
+					So(err, ShouldBeNil)
+					So(*metric.Counter.Value, ShouldEqual, len(dBuckets))
+
+					pm = <-ch
+					So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_method_latency_seconds_sum"].String())
+
+					err = pm.Write(&metric)
+					So(err, ShouldBeNil)
+					So(*metric.Counter.Value, ShouldEqual, latencySum)
+
+					for i := range dBuckets {
+						pm = <-ch
+						So(pm.Desc().String(), ShouldEqual, zc.MetricsDesc["zot_method_latency_seconds_bucket"].String())
+
+						err = pm.Write(&metric)
+						So(err, ShouldBeNil)
+						So(*metric.Counter.Value, ShouldEqual, i+1)
+					}
+
+					So(isChannelDrained(ch), ShouldEqual, true)
+				})
+				Convey("Negative testing: Send unknown metric type to MetricServer", func() {
+					serverController.Metrics.SendMetric(getRandomLatency())
+				})
+				Convey("Concurrent metrics scrape", func() {
+					var wg sync.WaitGroup
+
+					workersSize := rand.Intn(100)
+					for i := 0; i < workersSize; i++ {
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+							m := serverController.Metrics.ReceiveMetrics()
+							var json = jsoniter.ConfigCompatibleWithStandardLibrary
+
+							_, err := json.Marshal(m)
+							if err != nil {
+								exporterController.Log.Error().Err(err).Msg("Concurrent metrics scrape fail")
+							}
+						}()
+					}
+					wg.Wait()
+				})
+				Convey("Negative testing: Increment a counter that does not exist", func() {
+					cv := monitoring.CounterValue{Name: "dummyName"}
+					serverController.Metrics.SendMetric(cv)
+				})
+				Convey("Negative testing: Set a gauge for a metric with len(labelNames)!=len(knownLabelNames)", func() {
+					gv := monitoring.GaugeValue{
+						Name:       "zot.info",
+						Value:      1,
+						LabelNames: []string{"commit", "binaryType", "version"},
+					}
+					serverController.Metrics.SendMetric(gv)
+				})
+				Convey("Negative testing: Summary observe for a metric with labelNames!=knownLabelNames", func() {
+					sv := monitoring.SummaryValue{
+						Name:        "zot.repo.latency.seconds",
+						LabelNames:  []string{"dummyRepoLabelName"},
+						LabelValues: []string{"dummyrepo"},
+					}
+					serverController.Metrics.SendMetric(sv)
+				})
+				Convey("Negative testing: Histogram observe for a metric with len(labelNames)!=len(LabelValues)", func() {
+					hv := monitoring.HistogramValue{
+						Name:        "zot.method.latency.seconds",
+						LabelNames:  []string{"method"},
+						LabelValues: []string{"GET", "POST", "DELETE"},
+					}
+					serverController.Metrics.SendMetric(hv)
+				})
+				Convey("Negative testing: error in getting the size for a repo directory", func() {
+					monitoring.SetStorageUsage(serverController.Metrics, "/tmp/zot", "dummyrepo")
+				})
+				Convey("Disabling metrics after idle timeout", func() {
+					So(serverController.Metrics.IsEnabled(), ShouldEqual, true)
+					time.Sleep(monitoring.GetMaxIdleScrapeInterval())
+					So(serverController.Metrics.IsEnabled(), ShouldEqual, false)
 				})
 			})
 		})

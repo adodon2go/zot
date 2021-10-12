@@ -64,17 +64,17 @@ func (zc ZotCollector) Collect(ch chan<- prometheus.Metric) {
 			zc.MetricsDesc[name], prometheus.CounterValue, s.Sum, s.LabelValues...)
 	}
 
-	for _, s := range metrics.Histograms {
-		mname := zc.invalidChars.ReplaceAllLiteralString(s.Name, "_")
+	for _, h := range metrics.Histograms {
+		mname := zc.invalidChars.ReplaceAllLiteralString(h.Name, "_")
 		name := mname + "_count"
 		ch <- prometheus.MustNewConstMetric(
-			zc.MetricsDesc[name], prometheus.CounterValue, float64(s.Count), s.LabelValues...)
+			zc.MetricsDesc[name], prometheus.CounterValue, float64(h.Count), h.LabelValues...)
 
 		name = mname + "_sum"
 		ch <- prometheus.MustNewConstMetric(
-			zc.MetricsDesc[name], prometheus.CounterValue, s.Sum, s.LabelValues...)
+			zc.MetricsDesc[name], prometheus.CounterValue, h.Sum, h.LabelValues...)
 
-		if s.Buckets != nil {
+		if h.Buckets != nil {
 			for _, fvalue := range monitoring.GetDefaultBuckets() {
 				var svalue string
 				if fvalue == math.MaxFloat64 {
@@ -85,7 +85,7 @@ func (zc ZotCollector) Collect(ch chan<- prometheus.Metric) {
 
 				name = mname + "_bucket"
 				ch <- prometheus.MustNewConstMetric(
-					zc.MetricsDesc[name], prometheus.CounterValue, float64(s.Buckets[svalue]), append(s.LabelValues, svalue)...)
+					zc.MetricsDesc[name], prometheus.CounterValue, float64(h.Buckets[svalue]), append(h.LabelValues, svalue)...)
 			}
 		}
 	}

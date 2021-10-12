@@ -11,6 +11,7 @@ type MetricServer interface {
 	// works like SendMetric, but adds the metric regardless of the value of 'enabled' field for MetricServer
 	ForceSendMetric(interface{})
 	ReceiveMetrics() interface{}
+	IsEnabled() bool
 }
 
 func GetDefaultBuckets() []float64 {
