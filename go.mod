@@ -30,6 +30,7 @@ require (
 	github.com/opencontainers/umoci v0.4.8-0.20210922062158-e60a0cc726e6
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/prometheus/client_golang v1.7.1
+	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/rs/zerolog v1.22.0
 	github.com/smartystreets/goconvey v1.6.4
 	github.com/spf13/cobra v1.2.1
