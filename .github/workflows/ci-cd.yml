@@ -1,10 +1,10 @@
 on:
   push:
     branches: 
-      - master
+      - code-coverage
   pull_request:
     branches:
-      - master
+      - latest
   release:
     types:
       - published
