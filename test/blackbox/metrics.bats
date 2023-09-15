@@ -45,10 +45,19 @@ function setup_file() {
     },
     "extensions": {
         "metrics": {
-            "enable": true,
-            "prometheus": {
-                "path": "/metrics"
+            "enable": true
+        },
+        "search": {
+            "cve": {
+                "updateInterval": "2h"
             }
+        },
+        "scrub": {
+            "enable": true,
+            "interval": "24h"
+        },
+        "ui": {
+            "enable": true
         }
     }
 }

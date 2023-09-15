@@ -11,7 +11,12 @@
     "level": "debug"
   },
   "extensions": {
-    "metrics": {},
+    "metrics": {
+      "enable": true,
+      "prometheus": {
+          "path": "/metrics"
+      }
+    },
     "sync": {
       "credentialsFile": "./examples/sync-auth-filepath.json",
       "registries": [
@@ -48,6 +53,9 @@
     "scrub": {
       "enable": true,
       "interval": "24h"
+    },
+    "ui": {
+      "enable": true
     }
   }
 }
