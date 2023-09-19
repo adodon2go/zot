@@ -13,19 +13,18 @@ name: "CodeQL"
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
     # The branches below must be a subset of the branches above
-    branches: [ main ]
-  schedule:
-    - cron: '17 11 * * 0'
+    branches: [main]
 
 permissions: read-all
 
 jobs:
   analyze:
     name: Analyze
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
@@ -37,9 +36,6 @@ jobs:
         # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript', 'python' ]
         # Learn more:
         # https://docs.github.com/en/free-pro-team@latest/github/finding-security-vulnerabilities-and-errors-in-your-code/configuring-code-scanning#changing-the-languages-that-are-analyzed
-    env:
-      CGO_ENABLED: 0
-      GOFLAGS: "-tags=sync,search,scrub,metrics,userprefs,mgmt,imagetrust,containers_image_openpgp"
 
     steps:
     - name: Checkout repository
@@ -55,9 +51,6 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE
         go install github.com/swaggo/swag/cmd/swag@v1.8.12
-        go mod download
-        go install github.com/wadey/gocovmerge@latest
-        go get -u github.com/swaggo/swag/cmd/swag
         go mod download
 
     # Initializes the CodeQL tools for scanning.
@@ -87,3 +80,6 @@ jobs:
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2.21.8
+      env:
+        CGO_ENABLED: 0
+        GOFLAGS: "-tags=sync,search,scrub,metrics,lint,ui,mgmt,profile,userprefs,imagetrust,containers_image_openpgp"
