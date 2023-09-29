@@ -11,10 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
-	aws1 "github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/endpoints"
-	"github.com/aws/aws-sdk-go/aws/session"
-	smanager "github.com/aws/aws-sdk-go/service/secretsmanager"
 	"github.com/aws/aws-secretsmanager-caching-go/secretcache"
 	godigest "github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -110,20 +106,24 @@ func GetSecretsManagerClient(region, endpoint string) (*secretsmanager.Client, e
 }
 
 func GetSecretsManagerRetrieval(region, endpoint string) *secretcache.Cache {
-	endpointFunc := func(service, region string, optFns ...func(*endpoints.Options)) (endpoints.ResolvedEndpoint, error) {
-		return endpoints.ResolvedEndpoint{
-			PartitionID:   "aws",
-			URL:           endpoint,
-			SigningRegion: region,
-		}, nil
+	customResolver := aws.EndpointResolverWithOptionsFunc(
+		func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+			return aws.Endpoint{
+				PartitionID:   "aws",
+				URL:           endpoint,
+				SigningRegion: region,
+			}, nil
+		})
+
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion(region),
+		config.WithEndpointResolverWithOptions(customResolver))
+	if err != nil {
+		return nil
 	}
-	customResolver := endpoints.ResolverFunc(endpointFunc)
 
-	cfg := aws1.NewConfig().WithRegion(region).WithEndpointResolver(customResolver)
+	client := secretsmanager.NewFromConfig(cfg)
 
-	newSession := session.Must(session.NewSession())
-
-	client := smanager.New(newSession, cfg)
 	// Create a custom CacheConfig struct
 	config := secretcache.CacheConfig{
 		MaxCacheSize: secretcache.DefaultMaxCacheSize,
