@@ -22,4 +22,10 @@ type Cache interface {
 
 	// UsesRelativePaths returns if cache is storing blobs relative to cache rootDir
 	UsesRelativePaths() bool
+
+	// Put metrics
+	PutMetrics(m []byte) error
+
+	// Retrieved stored metrics
+	GetMetrics() ([]byte, error)
 }

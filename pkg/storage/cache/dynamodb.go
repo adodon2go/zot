@@ -287,3 +287,11 @@ func (d *DynamoDBDriver) updateItem(digest godigest.Digest, expression string,
 
 	return err
 }
+
+func (d *DynamoDBDriver) PutMetrics(m []byte) error {
+	return nil
+}
+
+func (d *DynamoDBDriver) GetMetrics() ([]byte, error) {
+	return nil, nil
+}

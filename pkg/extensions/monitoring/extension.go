@@ -4,14 +4,18 @@
 package monitoring
 
 import (
+	"encoding/json"
+	"net/http"
 	"path"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"gopkg.in/resty.v1"
 
 	"zotregistry.io/zot/errors"
 	"zotregistry.io/zot/pkg/log"
+	"zotregistry.io/zot/pkg/storage/cache"
 )
 
 const metricsNamespace = "zot"
@@ -86,8 +90,10 @@ var (
 )
 
 type metricServer struct {
-	enabled bool
-	log     log.Logger
+	enabled     bool
+	log         log.Logger
+	cacheDriver cache.Cache
+	url         string
 }
 
 func GetDefaultBuckets() []float64 {
@@ -103,6 +109,10 @@ func NewMetricsServer(enabled bool, log log.Logger) MetricServer {
 		enabled: enabled,
 		log:     log,
 	}
+}
+
+func (ms *metricServer) SetCacheDriver(cd cache.Cache) {
+	ms.cacheDriver = cd
 }
 
 // implementing the MetricServer interface.
@@ -131,11 +141,39 @@ func (ms *metricServer) ForceSendMetric(mfunc interface{}) {
 }
 
 func (ms *metricServer) ReceiveMetrics() interface{} {
+	resp, err := resty.R().Get(ms.url)
+	if err != nil && resp != nil && resp.StatusCode() == http.StatusOK {
+		return resp.Body()
+	}
 	return nil
 }
 
 func (ms *metricServer) IsEnabled() bool {
 	return ms.enabled
+}
+
+func (ms *metricServer) PersistCache() error {
+	if ms.IsEnabled() {
+		data := ms.ReceiveMetrics()
+		m, err := json.Marshal(data)
+		if err != nil {
+			panic(err)
+		}
+		return ms.cacheDriver.PutMetrics(m)
+	}
+
+	return nil
+}
+
+func (ms *metricServer) SetURL(url string) {
+	ms.url = url
+}
+
+func (ms *metricServer) RestoreFromCache() ([]byte, error) {
+	if ms.IsEnabled() {
+		return ms.cacheDriver.GetMetrics()
+	}
+	return []byte{}, nil
 }
 
 func IncHTTPConnRequests(ms MetricServer, lvalues ...string) {

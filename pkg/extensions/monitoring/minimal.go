@@ -5,6 +5,7 @@
 package monitoring
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"path"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"zotregistry.io/zot/pkg/log"
+	"zotregistry.io/zot/pkg/storage/cache"
 )
 
 const (
@@ -35,14 +37,15 @@ const (
 )
 
 type metricServer struct {
-	enabled    bool
-	lastCheck  time.Time
-	reqChan    chan interface{}
-	cache      *MetricsInfo
-	cacheChan  chan *MetricsInfo
-	bucketsF2S map[float64]string // float64 to string conversion of buckets label
-	log        log.Logger
-	lock       *sync.RWMutex
+	enabled     bool
+	lastCheck   time.Time
+	reqChan     chan interface{}
+	cache       *MetricsInfo
+	cacheChan   chan *MetricsInfo
+	cacheDriver cache.Cache
+	bucketsF2S  map[float64]string // float64 to string conversion of buckets label
+	log         log.Logger
+	lock        *sync.RWMutex
 }
 
 type MetricsInfo struct {
@@ -121,6 +124,32 @@ func (ms *metricServer) ReceiveMetrics() interface{} {
 	ms.cacheChan <- &MetricsInfo{}
 
 	return <-ms.cacheChan
+}
+
+func (ms *metricServer) SetCacheDriver(cd cache.Cache) {
+	ms.cacheDriver = cd
+}
+
+func (ms *metricServer) SetURL(url string) {
+}
+
+func (ms *metricServer) PersistCache() error {
+	if ms.IsEnabled() {
+		m, err := json.Marshal(ms.cache)
+		if err != nil {
+			panic(err)
+		}
+		return ms.cacheDriver.PutMetrics(m)
+	}
+
+	return nil
+}
+
+func (ms *metricServer) RestoreFromCache() ([]byte, error) {
+	if ms.IsEnabled() {
+		return ms.cacheDriver.GetMetrics()
+	}
+	return []byte{}, nil
 }
 
 func (ms *metricServer) IsEnabled() bool {

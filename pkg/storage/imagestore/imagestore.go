@@ -75,6 +75,9 @@ func NewImageStore(rootDir string, cacheDir string, dedupe, commit bool, log zlo
 
 		return nil
 	}
+	if metrics.IsEnabled() {
+		metrics.SetCacheDriver(cacheDriver)
+	}
 
 	imgStore := &ImageStore{
 		rootDir:     rootDir,

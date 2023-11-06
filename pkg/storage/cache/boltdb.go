@@ -60,11 +60,16 @@ func NewBoltDBCache(parameters interface{}, log zlog.Logger) Cache {
 
 			return err
 		}
+		if _, err := tx.CreateBucketIfNotExists([]byte(constants.MetricsCache)); err != nil {
+			log.Error().Err(err).Str("dbPath", dbPath).Msg("unable to create metrics bucket")
+
+			return err
+		}
 
 		return nil
 	}); err != nil {
 		// something went wrong
-		log.Error().Err(err).Msg("unable to create a cache")
+		log.Error().Err(err).Msg("unable to create cache")
 
 		return nil
 	}
@@ -320,4 +325,53 @@ func (d *BoltDBDriver) DeleteBlob(digest godigest.Digest, path string) error {
 	}
 
 	return nil
+}
+
+func (d *BoltDBDriver) PutMetrics(m []byte) error {
+	var err error
+
+	if err = d.db.Update(func(tx *bbolt.Tx) error {
+		metrics := tx.Bucket([]byte(constants.MetricsCache))
+		if metrics == nil {
+			// this is a serious failure
+			err := errors.ErrCacheNoBucket
+			d.log.Error().Err(err).Msg("unable to access metrics bucket")
+
+			return err
+		}
+
+		if err := metrics.Put([]byte(constants.MetricsCache), m); err != nil {
+			d.log.Error().Err(err).Str("bucket", constants.MetricsCache).Msg("unable to put")
+
+			return err
+		}
+
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *BoltDBDriver) GetMetrics() ([]byte, error) {
+	var m []byte
+	if err := d.db.View(func(tx *bbolt.Tx) error {
+		metrics := tx.Bucket([]byte(constants.MetricsCache))
+		if metrics == nil {
+			// this is a serious failure
+			err := errors.ErrCacheNoBucket
+			d.log.Error().Err(err).Msg("unable to access metrics bucket")
+
+			return err
+		}
+
+		m = metrics.Get([]byte(constants.MetricsCache))
+
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	return m, nil
 }

@@ -227,6 +227,14 @@ func (c *Controller) Init(reloadCtx context.Context) error {
 	}
 
 	c.Metrics = monitoring.NewMetricsServer(enabled, c.Log)
+	if enabled && c.Config.Extensions.Metrics.Prometheus != nil {
+		path := "/metrics"
+		if c.Config.Extensions.Metrics.Prometheus.Path != "" {
+			path = c.Config.Extensions.Metrics.Prometheus.Path
+		}
+		url := fmt.Sprintf("http://127.0.0.1:%d%s", c.Config.HTTP.Port, path)
+		c.Metrics.SetURL(url)
+	}
 
 	if err := c.InitImageStore(); err != nil { //nolint:contextcheck
 		return err
