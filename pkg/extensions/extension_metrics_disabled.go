@@ -12,10 +12,11 @@ import (
 	zcommon "zotregistry.io/zot/pkg/common"
 	"zotregistry.io/zot/pkg/extensions/monitoring"
 	"zotregistry.io/zot/pkg/log"
+	"zotregistry.io/zot/pkg/scheduler"
 )
 
 // EnableMetricsExtension ...
-func EnableMetricsExtension(config *config.Config, log log.Logger, rootDir string) {
+func EnableMetricsExtension(config *config.Config, metrics monitoring.MetricServer, sch *scheduler.Scheduler, log log.Logger) {
 	log.Warn().Msg("skipping enabling metrics extension because given zot binary doesn't include this feature," +
 		"please build a binary that does so")
 }

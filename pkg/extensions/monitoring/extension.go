@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -142,7 +143,7 @@ func (ms *metricServer) ForceSendMetric(mfunc interface{}) {
 
 func (ms *metricServer) ReceiveMetrics() interface{} {
 	resp, err := resty.R().Get(ms.url)
-	if err != nil && resp != nil && resp.StatusCode() == http.StatusOK {
+	if err == nil && resp != nil && resp.StatusCode() == http.StatusOK {
 		return resp.Body()
 	}
 	return nil
@@ -153,13 +154,32 @@ func (ms *metricServer) IsEnabled() bool {
 }
 
 func (ms *metricServer) PersistCache() error {
+	ms.log.Debug().Msg("extensions PersistCache() call")
 	if ms.IsEnabled() {
 		data := ms.ReceiveMetrics()
-		m, err := json.Marshal(data)
-		if err != nil {
-			panic(err)
+		if data != nil {
+			//ms.log.Debug().Str("metrics", string(data.([]uint8))).Msg("extensions ReceiveMetrics() call")
+			strData := string(data.([]uint8))
+			metrics := make(map[string]interface{}, 0)
+			for _, line := range strings.Split(strings.TrimSuffix(strData, "\n"), "\n") {
+				if !strings.HasPrefix(line, "#") {
+					if strings.HasPrefix(line, "zot") {
+						tokens := strings.Fields(line)
+						if len(tokens) != 2 {
+							return errors.ErrInvalidPublicKeyContent
+						}
+						metrics[tokens[0]] = tokens[1]
+					}
+				}
+			}
+			m, err := json.Marshal(metrics)
+			ms.log.Debug().Str("metrics", string(m)).Msg("extensions ReceiveMetrics() call")
+			if err != nil {
+				panic(err)
+			}
+			ms.log.Debug().Msg("extensions cacheDriver.PutMetrics() call")
+			return ms.cacheDriver.PutMetrics(m)
 		}
-		return ms.cacheDriver.PutMetrics(m)
 	}
 
 	return nil

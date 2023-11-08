@@ -232,7 +232,7 @@ func (c *Controller) Init(reloadCtx context.Context) error {
 		if c.Config.Extensions.Metrics.Prometheus.Path != "" {
 			path = c.Config.Extensions.Metrics.Prometheus.Path
 		}
-		url := fmt.Sprintf("http://127.0.0.1:%d%s", c.Config.HTTP.Port, path)
+		url := fmt.Sprintf("http://127.0.0.1:%s%s", c.Config.HTTP.Port, path)
 		c.Metrics.SetURL(url)
 	}
 
@@ -397,7 +397,7 @@ func (c *Controller) StartBackgroundTasks(reloadCtx context.Context) {
 
 	// Enable extensions if extension config is provided for DefaultStore
 	if c.Config != nil && c.Config.Extensions != nil {
-		ext.EnableMetricsExtension(c.Config, c.Log, c.Config.Storage.RootDirectory)
+		ext.EnableMetricsExtension(c.Config, c.Metrics, taskScheduler, c.Log)
 		ext.EnableSearchExtension(c.Config, c.StoreController, c.MetaDB, taskScheduler, c.CveScanner, c.Log)
 	}
 	// runs once if metrics are enabled & imagestore is local
@@ -416,11 +416,6 @@ func (c *Controller) StartBackgroundTasks(reloadCtx context.Context) {
 					}, c.Audit, c.Log)
 
 				gc.CleanImageStorePeriodically(storageConfig.GCInterval, taskScheduler)
-			}
-
-			// Enable extensions if extension config is provided for subImageStore
-			if c.Config != nil && c.Config.Extensions != nil {
-				ext.EnableMetricsExtension(c.Config, c.Log, storageConfig.RootDirectory)
 			}
 
 			// Enable running dedupe blobs both ways (dedupe or restore deduped blobs) for subpaths
