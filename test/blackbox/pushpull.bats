@@ -142,6 +142,7 @@ function teardown_file() {
     run oras pull --plain-http 127.0.0.1:${zot_port}/hello-artifact:v2 -d -v
     [ "$status" -eq 0 ]
     grep -q "hello world" artifact.txt
+    [ "$status" -eq 0 ]
     rm -f artifact.txt
 }
 

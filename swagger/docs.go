@@ -60,6 +60,12 @@ const docTemplate = `{
                             "type": "string"
                         }
                     },
+                    "400": {
+                        "description": "bad request",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
                     "404": {
                         "description": "not found",
                         "schema": {

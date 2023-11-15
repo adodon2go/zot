@@ -1964,6 +1964,7 @@ type ReferenceList struct {
 // @Param   digest          path    string     true        "image digest"
 // @Param   artifactType    query   string     true        "artifact type"
 // @Success 200 {string} string "ok"
+// @Failure 400 {string} string "bad request"
 // @Failure 404 {string} string "not found"
 // @Failure 500 {string} string "internal server error"
 // @Router /oras/artifacts/v1/{name}/manifests/{digest}/referrers [get].

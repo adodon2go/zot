@@ -116,7 +116,7 @@ build-metadata: $(if $(findstring ui,$(BUILD_LABELS)), ui)
 	go list -tags $(BUILD_TAGS) -f '{{ join .GoFiles "\n" }}' ./... | sort -u
 
 .PHONY: gen-protobuf
-gen-protobuf: check-not-freebds $(PROTOC)
+gen-protobuf: check-not-freebsd $(PROTOC)
 	$(PROTOC) --experimental_allow_proto3_optional \
 		--proto_path=$(TOP_LEVEL)/pkg/meta/proto \
 		--go_out=$(TOP_LEVEL)/pkg/meta/proto \
@@ -250,15 +250,15 @@ check-skopeo:
 check-awslocal:
 	awslocal --version || (echo "You need awslocal to be installed in order to run tests"; exit 1)
 
-$(NOTATION):
+$(NOTATION): check-not-freebsd
 	mkdir -p $(TOOLSDIR)/bin
-	curl -Lo notation.tar.gz https://github.com/notaryproject/notation/releases/download/v$(NOTATION_VERSION)/notation_$(NOTATION_VERSION)_linux_amd64.tar.gz
+	curl -Lo notation.tar.gz https://github.com/notaryproject/notation/releases/download/v$(NOTATION_VERSION)/notation_$(NOTATION_VERSION)_$(OS)_$(ARCH).tar.gz
 	tar xvzf notation.tar.gz -C $(TOOLSDIR)/bin  notation
 	rm notation.tar.gz
 
-$(ORAS):
+$(ORAS): check-not-freebsd
 	mkdir -p $(TOOLSDIR)/bin
-	curl -Lo oras.tar.gz https://github.com/oras-project/oras/releases/download/v$(ORAS_VERSION)/oras_$(ORAS_VERSION)_linux_amd64.tar.gz
+	curl -Lo oras.tar.gz https://github.com/oras-project/oras/releases/download/v$(ORAS_VERSION)/oras_$(ORAS_VERSION)_$(OS)_$(ARCH).tar.gz
 	tar xvzf oras.tar.gz -C $(TOOLSDIR)/bin  oras
 	rm oras.tar.gz
 
@@ -268,15 +268,15 @@ $(HELM):
 	tar xvzf helm.tar.gz -C $(TOOLSDIR)/bin linux-amd64/helm  --strip-components=1
 	rm helm.tar.gz
 
-$(REGCLIENT):
+$(REGCLIENT): check-not-freebsd
 	mkdir -p $(TOOLSDIR)/bin
-	curl -Lo regctl https://github.com/regclient/regclient/releases/download/$(REGCLIENT_VERSION)/regctl-linux-amd64
+	curl -Lo regctl https://github.com/regclient/regclient/releases/download/$(REGCLIENT_VERSION)/regctl-$(OS)-$(ARCH)
 	mv regctl $(TOOLSDIR)/bin/regctl
 	chmod +x $(TOOLSDIR)/bin/regctl
 
-$(CRICTL):
+$(CRICTL): check-not-freebsd
 	mkdir -p $(TOOLSDIR)/bin
-	curl -Lo crictl.tar.gz https://github.com/kubernetes-sigs/cri-tools/releases/download/$(CRICTL_VERSION)/crictl-$(CRICTL_VERSION)-linux-amd64.tar.gz
+	curl -Lo crictl.tar.gz https://github.com/kubernetes-sigs/cri-tools/releases/download/$(CRICTL_VERSION)/crictl-$(CRICTL_VERSION)-$(OS)-$(ARCH).tar.gz
 	tar xvzf crictl.tar.gz && rm crictl.tar.gz
 	mv crictl $(TOOLSDIR)/bin/crictl
 	chmod +x $(TOOLSDIR)/bin/crictl
@@ -521,9 +521,9 @@ $(STACKER): check-linux
 	curl -fsSL https://github.com/project-stacker/stacker/releases/latest/download/stacker -o $@; \
 	chmod +x $@
 
-$(COSIGN):
+$(COSIGN): check-not-freebsd
 	mkdir -p $(TOOLSDIR)/bin
-	curl -fsSL https://github.com/sigstore/cosign/releases/download/v$(COSIGN_VERSION)/cosign-linux-amd64 -o $@; \
+	curl -fsSL https://github.com/sigstore/cosign/releases/download/v$(COSIGN_VERSION)/cosign-$(OS)-$(ARCH) -o $@; \
 	chmod +x $@
 
 # set ZUI_VERSION to empty string in order to clone zui locally and build default branch
@@ -568,8 +568,8 @@ ifneq ($(shell go env GOOS),linux)
 	$(error makefile target can be run only on linux)
 endif
 
-.PHONY: check-not-freebds
-check-not-freebds:
+.PHONY: check-not-freebsd
+check-not-freebsd:
 ifeq ($(shell go env GOOS),freebsd)
   $(error makefile target can't be run on freebsd)
 endif
